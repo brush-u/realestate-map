@@ -242,7 +242,7 @@
                 <div class="flex items-center space-x-1.5 text-[10px] text-slate-400 font-semibold">
                     <span class="w-2 h-2 bg-indigo-600 rounded-full animate-ping flex-shrink-0"></span><span>현재 적용 조건</span>
                 </div>
-                <div id="condition-summary-text" class="text-xs font-black text-indigo-950 tracking-tight truncate">매매 · 아파트 · 0~30억 · 10~80평 · 사용 안 함 (반경 3km)</div>
+                <div id="condition-summary-text" class="text-xs font-black text-indigo-950 tracking-tight truncate">매매 · 아파트 · 0~30억 · 10~80평 · 사용 안 함 (반경 1km)</div>
             </button>
         </div>
 
@@ -303,10 +303,10 @@
                     <label class="text-sm font-bold text-slate-800 flex items-center">
                         <i class="fa-solid fa-compass-drafting text-indigo-600 mr-2"></i>검색 반경 설정
                     </label>
-                    <span id="radius-badge" class="text-xs bg-indigo-50 text-indigo-700 font-bold px-2.5 py-1 rounded-md">반경 3km 내</span>
+                    <span id="radius-badge" class="text-xs bg-indigo-50 text-indigo-700 font-bold px-2.5 py-1 rounded-md">반경 1km 내</span>
                 </div>
                 <div class="space-y-1 pt-1">
-                    <input type="range" id="input-radius" min="1" max="50" value="3" oninput="updateRadiusText(this.value)" class="custom-range-single">
+                    <input type="range" id="input-radius" min="1" max="50" value="1" oninput="updateRadiusText(this.value)" class="custom-range-single">
                     <div class="flex justify-between text-xs font-medium text-slate-400 px-1 pt-1">
                         <span>1km</span>
                         <span>10km</span>
@@ -471,7 +471,7 @@
             <div class="flex items-center space-x-1.5 text-[10px] text-indigo-400 font-semibold">
                 <i class="fa-solid fa-circle-check"></i><span>현재 적용 조건</span>
             </div>
-            <div id="condition-summary-text-mini" class="text-xs font-black text-indigo-950 tracking-tight">매매 · 아파트 · 0~30억 · 10~80평 · 사용 안 함 (반경 3km)</div>
+            <div id="condition-summary-text-mini" class="text-xs font-black text-indigo-950 tracking-tight">매매 · 아파트 · 0~30억 · 10~80평 · 사용 안 함 (반경 1km)</div>
         </button>
 
         <div id="result-container" class="flex-grow overflow-y-auto p-4 space-y-4">
@@ -487,7 +487,7 @@
         let map, centerMarker, radiusCircle;
         let currentLat = 37.5665;
         let currentLng = 126.9780;
-        let searchRadius = 3;
+        let searchRadius = 1;
         let markersList = [];
         let facilityMarkersList = []; // 역세권/마트/공원/학교 등 "추가 조건" 시설 마커 (아파트 마커와 구분)
         let facilityLinesList = [];   // 중심점 -> 시설 마커를 잇는 얇은 연결선
@@ -499,6 +499,7 @@
             school: { color: 'purple', hex: '#a855f7', label: '학교' },
         };
         let infoWindow;
+        let infoWindowPinned = false; // 클릭으로 풍선말을 고정해뒀는지 (매물명을 클릭할 시간을 주기 위함)
         let currentLawdCd = null;
         let currentSigunguLabel = null;
 
@@ -578,6 +579,7 @@
             });
 
             map.addListener('click', (e) => {
+                infoWindowPinned = false;
                 infoWindow.close(); // 모바일엔 mouseout이 없으니, 빈 지도를 탭하면 열려있던 풍선말을 닫는다
                 currentLat = e.latLng.lat();
                 currentLng = e.latLng.lng();
@@ -1029,6 +1031,17 @@
         }
 
         async function fetchMolitRealEstateData() {
+            // 새 검색이 시작되면(다른 위치를 클릭하는 등) 이전 결과의 마커/연결선을 데이터가
+            // 오기도 전에 즉시 지운다 - 예전엔 새 데이터가 준비될 때까지 옛 마커가 남아있었음.
+            markersList.forEach(m => m.setMap(null));
+            markersList = [];
+            facilityMarkersList.forEach(m => m.setMap(null));
+            facilityMarkersList = [];
+            facilityLinesList.forEach(l => l.setMap(null));
+            facilityLinesList = [];
+            infoWindow.close();
+            infoWindowPinned = false;
+
             let budgetFrom = parseFloat(document.getElementById('budget-from').value);
             let budgetTo = parseFloat(document.getElementById('budget-to').value);
             if (budgetFrom > budgetTo) [budgetFrom, budgetTo] = [budgetTo, budgetFrom];
@@ -1148,226 +1161,328 @@
 
             // 3) 좌표 변환을 위한 지오코딩 (단지명 기반 주소가 지번보다 매칭률이 높다)
             const addressOf = (t) => `${t.district || currentSigunguLabel || ''} ${t.umdNm} ${t.aptNm}`.trim();
-            const uniqueAddresses = [...new Set(candidates.map(addressOf))];
-
-            let geocodeMap = {};
-            try {
-                const res = await fetch('/api/geocode/batch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ addresses: uniqueAddresses }),
-                });
-                geocodeMap = await res.json();
-            } catch (e) {
-                container.innerHTML = `<div class="text-center py-8 text-rose-400 text-xs">좌표 변환(지오코딩) 실패: ${e.message}</div>`;
-                return;
-            }
-
-            // 4) 좌표가 확보된 건만 남기고, 반경 필터링
-            let filtered = candidates.map((t, idx) => {
-                const loc = geocodeMap[addressOf(t)];
-                if (!loc) return null;
-                return {
-                    id: `t${idx}-${t.aptNm}-${t.floor}-${t.dealDay}`.replace(/\s/g, ''),
-                    name: t.aptNm,
-                    district: t.district || currentSigunguLabel || '',
-                    dong: t.umdNm,
-                    pyeong: t.pyeong,
-                    price: t.dealAmountEok,        // 매매가 또는 보증금(전세/월세)
-                    monthlyRent: t.monthlyRentManwon || 0, // 월세(만원), 전세/매매는 0
-                    dealCategory: t.dealCategory || 'trade',
-                    lat: loc.lat,
-                    lng: loc.lng,
-                    date: `${t.dealYear}-${String(t.dealMonth).padStart(2, '0')}-${String(t.dealDay).padStart(2, '0')}`,
-                    floor: t.floor,
-                    buildYear: t.buildYear,
-                    dealingGbn: t.dealingGbn,
-                    estateAgentSggNm: t.estateAgentSggNm,
-                    isEstimate: !!t.isEstimate,
-                    estimateBasisYm: t.estimateBasisYm || null,
-                };
-            }).filter(Boolean).filter(item => {
-                const dist = getDistanceFromLatLonInKm(currentLat, currentLng, item.lat, item.lng);
-                return dist <= searchRadius;
-            });
-
-            // 4.5) 역세권/마트·백화점/공원/학교 조건이 선택되어 있으면, 좌표가 확보된
-            //     매물들에 대해 실제 인근 시설 존재 여부를 카카오 장소검색으로 확인해서 좁힌다.
-            //     이때 실제로 매칭된 시설(지하철역/마트 등) 좌표도 함께 모아서 지도에 표시한다.
             const NEARBY_TYPES = ['subway', 'mart', 'park', 'school'];
-            let nearbyFacilitiesToShow = [];
-            if (NEARBY_TYPES.includes(subCondType) && filtered.length > 0) {
-                container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">인근 시설(${SUB_COND_LABELS[subCondType]}) 확인 중...</div>`;
-                try {
-                    const res = await fetch('/api/nearby-check', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            type: subCondType,
-                            items: filtered.map(f => ({ id: f.id, lat: f.lat, lng: f.lng })),
-                        }),
-                    });
-                    const nearbyData = await res.json();
-                    if (res.ok) {
-                        const results = nearbyData.results || [];
-                        const foundIds = new Set(results.filter(r => r.found).map(r => r.id));
-                        filtered = filtered.filter(item => foundIds.has(item.id));
-
-                        // 같은 시설이 여러 매물에 걸쳐 중복으로 잡힐 수 있으니 좌표 기준으로 중복 제거
-                        const seenFacility = new Set();
-                        results.forEach(r => {
-                            if (!r.found || !r.facility) return;
-                            const key = `${r.facility.lat.toFixed(5)},${r.facility.lng.toFixed(5)}`;
-                            if (seenFacility.has(key)) return;
-                            seenFacility.add(key);
-                            nearbyFacilitiesToShow.push(r.facility);
-                        });
-                    } else {
-                        console.error('[인근 시설 확인 실패]', nearbyData);
-                    }
-                } catch (e) {
-                    console.error('[인근 시설 확인 실패]', e);
-                }
-            }
-
-            facilityMarkersList.forEach(m => m.setMap(null));
-            facilityMarkersList = [];
-            facilityLinesList.forEach(l => l.setMap(null));
-            facilityLinesList = [];
-
-            markersList.forEach(m => m.setMap(null));
-            markersList = [];
-            container.innerHTML = '';
-
-            const skippedCount = candidates.length - filtered.length;
-            setResultCount(filtered.length);
-
-            if (filtered.length === 0) {
-                container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">설정하신 조건과 반경(${searchRadius}km) 내에 일치하는 실거래 매물이 없습니다.${skippedCount > 0 ? ` (좌표 미확인/반경 밖 ${skippedCount}건 제외)` : ''}</div>`;
-                return;
-            }
-
-            const grouped = {};
-            filtered.forEach(item => {
-                if (!grouped[item.district]) grouped[item.district] = {};
-                if (!grouped[item.district][item.dong]) grouped[item.district][item.dong] = [];
-                grouped[item.district][item.dong].push(item);
-            });
+            const needsNearbyCheck = NEARBY_TYPES.includes(subCondType);
 
             let markerIndex = 0;
-            let markersPlacedCount = 0;
-            const totalMarkersToPlace = filtered.length;
-            for (const [district, dongs] of Object.entries(grouped)) {
-                container.insertAdjacentHTML('beforeend', `
-                    <div class="bg-slate-50/70 border border-slate-200 rounded-2xl p-3.5 space-y-3 shadow-xs">
-                        <div class="flex items-center space-x-2 border-b border-indigo-200 pb-2">
-                            <i class="fa-solid fa-map-location-dot text-indigo-600 text-sm"></i>
-                            <span class="font-black text-indigo-700 text-sm bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl shadow-2xs">${district}</span>
-                        </div>
-                        <div id="district-group-${district}" class="space-y-3"></div>
-                    </div>
-                `);
+            let totalAppended = 0;
 
-                const districtContainer = document.getElementById(`district-group-${district}`);
+            // 매물 마커 + 리스트 카드를 화면에 추가한다. 여러 번 나눠 불러도 안전하도록,
+            // 이미 만들어둔 구/동 그룹 컨테이너가 있으면 그대로 재사용해서 이어 붙인다.
+            // (전체가 다 준비될 때까지 기다리지 않고, 준비되는 대로 바로바로 보여주기 위함)
+            function appendItemsToUI(items) {
+                if (items.length === 0) return;
+                if (totalAppended === 0) container.innerHTML = ''; // "불러오는 중" 문구를 첫 결과로 교체
+                totalAppended += items.length;
+                setResultCount(totalAppended);
 
-                for (const [dong, items] of Object.entries(dongs)) {
-                    districtContainer.insertAdjacentHTML('beforeend', `
-                        <div class="space-y-2 pt-1">
-                            <span class="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md inline-block shadow-2xs">${dong}</span>
-                            <div id="dong-group-${district}-${dong}" class="space-y-2.5 pt-1"></div>
-                        </div>
-                    `);
+                const grouped = {};
+                items.forEach(item => {
+                    if (!grouped[item.district]) grouped[item.district] = {};
+                    if (!grouped[item.district][item.dong]) grouped[item.district][item.dong] = [];
+                    grouped[item.district][item.dong].push(item);
+                });
 
-                    const dongContainer = document.getElementById(`dong-group-${district}-${dong}`);
-
-                    items.forEach(item => {
-                        const currentIdx = markerIndex++;
-
-                        setTimeout(() => {
-                            const marker = new google.maps.Marker({
-                                position: { lat: item.lat, lng: item.lng },
-                                map: map,
-                                animation: google.maps.Animation.DROP,
-                                icon: {
-                                    url: item.isEstimate
-                                        ? "http://maps.google.com/mapfiles/ms/icons/yellow-dot.png"
-                                        : "http://maps.google.com/mapfiles/ms/icons/red-dot.png"
-                                },
-                                title: item.name
-                            });
-
-                            playDropSound();
-                            if (navigator.vibrate) navigator.vibrate(15); // 짧은 진동 (iOS Safari는 미지원)
-
-                            const dealLabel = item.dealCategory === 'rent' ? (item.monthlyRent > 0 ? '월세' : '전세') : '실거래가';
-                            const priceLabel = item.isEstimate ? `추정 시세(${item.estimateBasisYm} 실거래 기준)` : dealLabel;
-                            const showInfo = () => {
-                                infoWindow.setContent(`
-                                    <div style="padding:0px; font-family:'Apple SD Gothic Neo',sans-serif;">
-                                        <div onclick="goToListItem('${item.id}', ${item.lat}, ${item.lng})" style="font-weight:700; font-size:13px; color:#4338ca; margin-bottom:2px; cursor:pointer; text-decoration:underline; text-underline-offset:2px;">${item.name}</div>
-                                        <div style="font-size:12px; color:#64748b;">${priceLabel}: <strong style="color:${item.isEstimate ? '#b45309' : '#e11d48'}; font-weight:800;">${formatPriceText(item)}</strong> (${item.pyeong}평)</div>
-                                    </div>
-                                `);
-                                infoWindow.open(map, marker);
-                            };
-
-                            // 데스크톱: 마우스오버로 풍선말. 모바일: 탭(=click)에도 풍선말이 뜨게 한다
-                            // (터치 기기는 mouseover가 잘 안 잡히므로 click에서도 같은 동작을 해준다).
-                            marker.addListener('mouseover', showInfo);
-                            marker.addListener('click', showInfo);
-
-                            // 매물이 없는 곳으로 마우스가 이동하면(=이 마커에서 벗어나면) 풍선말을 닫는다.
-                            marker.addListener('mouseout', () => {
-                                infoWindow.close();
-                            });
-
-                            markersList.push(marker);
-
-                            // 지도에 마커가 모두(마지막까지) 찍히고 나면 결과 드로어를 자동으로 연다.
-                            // 그 전에 사용자가 매칭결과 아이콘을 직접 눌러 미리 열어도 별도로 방해하지 않는다.
-                            markersPlacedCount++;
-                            if (markersPlacedCount === totalMarkersToPlace) {
-                                toggleDrawer('drawer-results', true);
-                            }
-                        }, currentIdx * 150);
-
-                        const naverLandUrl = `https://new.land.naver.com/search?sk=${encodeURIComponent(item.name)}`;
-                        const priceBoxClass = item.isEstimate
-                            ? 'bg-amber-50 border border-amber-200'
-                            : 'bg-rose-50 border border-rose-200';
-                        const priceTextClass = item.isEstimate ? 'text-amber-700' : 'text-rose-600';
-                        const dealLabel = item.dealCategory === 'rent' ? (item.monthlyRent > 0 ? '월세' : '전세') : '실거래가';
-                        const priceLabelText = item.isEstimate ? `추정시세(${item.estimateBasisYm})` : dealLabel;
-
-                        dongContainer.insertAdjacentHTML('beforeend', `
-                            <div id="card-${item.id}" class="bg-white hover:bg-indigo-50/40 border ${item.isEstimate ? 'border-amber-200' : 'border-slate-200'} hover:border-indigo-600 rounded-xl p-3.5 space-y-2.5 transition-all cursor-pointer shadow-2xs" onclick="map.panTo({lat: ${item.lat}, lng: ${item.lng}}); focusCard('card-${item.id}');">
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <h4 class="font-bold text-slate-900 text-sm">
-                                            <a href="${naverLandUrl}" target="_blank" onclick="event.stopPropagation();" class="text-indigo-700 hover:underline inline-flex items-center space-x-1">
-                                                <span>${item.name}</span>
-                                                <i class="fa-solid fa-arrow-up-right-from-square text-[10px] ml-1"></i>
-                                            </a>
-                                        </h4>
-                                        ${item.isEstimate ? `<span class="text-[10px] text-amber-600 font-semibold">최근 실거래 없음 · 과거 실거래 기반 추정</span>` : ''}
-                                    </div>
-                                    <!-- 가격 정보 강조 -->
-                                    <div class="${priceBoxClass} px-2.5 py-1 rounded-lg text-right">
-                                        <span class="text-[9px] ${priceTextClass} font-semibold block">${priceLabelText}</span>
-                                        <span class="font-black ${priceTextClass} text-sm tracking-tight">${formatPriceText(item)}</span>
-                                    </div>
+                for (const [district, dongs] of Object.entries(grouped)) {
+                    let districtContainer = document.getElementById(`district-group-${district}`);
+                    if (!districtContainer) {
+                        container.insertAdjacentHTML('beforeend', `
+                            <div class="bg-slate-50/70 border border-slate-200 rounded-2xl p-3.5 space-y-3 shadow-xs">
+                                <div class="flex items-center space-x-2 border-b border-indigo-200 pb-2">
+                                    <i class="fa-solid fa-map-location-dot text-indigo-600 text-sm"></i>
+                                    <span class="font-black text-indigo-700 text-sm bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl shadow-2xs">${district}</span>
                                 </div>
-                                <!-- 상세 내용 폰트 크기 확대 및 가독성 개선 -->
-                                <div class="text-[13px] text-slate-700 grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 font-medium">
-                                    <div>📍 지역: <span class="font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">${item.district}</span> <span class="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">${item.dong}</span></div>
-                                    <div>📐 평형: <strong class="text-slate-900">전용 ${item.pyeong}평 (${item.floor}층)</strong></div>
-                                    <div>📅 ${item.isEstimate ? '해당 실거래일' : '계약일'}: <strong class="text-slate-900">${item.date}</strong></div>
-                                    <div>🏗️ 건축년도: <strong class="text-slate-900">${item.buildYear}년</strong></div>
-                                </div>
+                                <div id="district-group-${district}" class="space-y-3"></div>
                             </div>
                         `);
-                    });
+                        districtContainer = document.getElementById(`district-group-${district}`);
+                    }
+
+                    for (const [dong, dongItems] of Object.entries(dongs)) {
+                        let dongContainer = document.getElementById(`dong-group-${district}-${dong}`);
+                        if (!dongContainer) {
+                            districtContainer.insertAdjacentHTML('beforeend', `
+                                <div class="space-y-2 pt-1">
+                                    <span class="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md inline-block shadow-2xs">${dong}</span>
+                                    <div id="dong-group-${district}-${dong}" class="space-y-2.5 pt-1"></div>
+                                </div>
+                            `);
+                            dongContainer = document.getElementById(`dong-group-${district}-${dong}`);
+                        }
+
+                        dongItems.forEach(item => {
+                            const currentIdx = markerIndex++;
+
+                            setTimeout(() => {
+                                const marker = new google.maps.Marker({
+                                    position: { lat: item.lat, lng: item.lng },
+                                    map: map,
+                                    animation: google.maps.Animation.DROP,
+                                    icon: {
+                                        url: item.isEstimate
+                                            ? "http://maps.google.com/mapfiles/ms/icons/yellow-dot.png"
+                                            : "http://maps.google.com/mapfiles/ms/icons/red-dot.png"
+                                    },
+                                    title: item.name
+                                });
+
+                                playDropSound();
+                                if (navigator.vibrate) navigator.vibrate(15); // 짧은 진동 (iOS Safari는 미지원)
+
+                                const dealLabel = item.dealCategory === 'rent' ? (item.monthlyRent > 0 ? '월세' : '전세') : '실거래가';
+                                const priceLabel = item.isEstimate ? `추정 시세(${item.estimateBasisYm} 실거래 기준)` : dealLabel;
+                                const showInfo = () => {
+                                    infoWindow.setContent(`
+                                        <div style="padding:0px; font-family:'Apple SD Gothic Neo',sans-serif;">
+                                            <div onclick="goToListItem('${item.id}', ${item.lat}, ${item.lng})" style="font-weight:700; font-size:13px; color:#4338ca; margin-bottom:2px; cursor:pointer; text-decoration:underline; text-underline-offset:2px;">${item.name}</div>
+                                            <div style="font-size:12px; color:#64748b;">${priceLabel}: <strong style="color:${item.isEstimate ? '#b45309' : '#e11d48'}; font-weight:800;">${formatPriceText(item)}</strong> (${item.pyeong}평)</div>
+                                        </div>
+                                    `);
+                                    infoWindow.open(map, marker);
+                                };
+
+                                // 데스크톱: 마우스오버로 풍선말(미리보기, 벗어나면 닫힘).
+                                // 클릭: 풍선말을 "고정"해서 마우스를 풍선말 쪽으로 옮겨 매물명을
+                                // 클릭할 수 있게 한다 (안 그러면 mouseout이 먼저 발동해 닫혀버림).
+                                // 모바일도 클릭에서 뜨므로 동일하게 동작한다.
+                                marker.addListener('mouseover', () => {
+                                    infoWindowPinned = false; // 다른 마커를 호버하면 이전 고정은 해제 (미리보기로 전환)
+                                    showInfo();
+                                });
+                                marker.addListener('click', () => {
+                                    infoWindowPinned = true;
+                                    showInfo();
+                                });
+
+                                // 매물이 없는 곳으로 마우스가 이동하면(=이 마커에서 벗어나면) 풍선말을 닫는다.
+                                // 단, 클릭으로 고정된 상태라면 마우스가 풍선말로 이동할 시간을 주기 위해 안 닫는다.
+                                marker.addListener('mouseout', () => {
+                                    if (!infoWindowPinned) infoWindow.close();
+                                });
+
+                                markersList.push(marker);
+                            }, currentIdx * 150);
+
+                            const naverLandUrl = `https://new.land.naver.com/search?sk=${encodeURIComponent(item.name)}`;
+                            const priceBoxClass = item.isEstimate
+                                ? 'bg-amber-50 border border-amber-200'
+                                : 'bg-rose-50 border border-rose-200';
+                            const priceTextClass = item.isEstimate ? 'text-amber-700' : 'text-rose-600';
+                            const dealLabel = item.dealCategory === 'rent' ? (item.monthlyRent > 0 ? '월세' : '전세') : '실거래가';
+                            const priceLabelText = item.isEstimate ? `추정시세(${item.estimateBasisYm})` : dealLabel;
+
+                            dongContainer.insertAdjacentHTML('beforeend', `
+                                <div id="card-${item.id}" class="bg-white hover:bg-indigo-50/40 border ${item.isEstimate ? 'border-amber-200' : 'border-slate-200'} hover:border-indigo-600 rounded-xl p-3.5 space-y-2.5 transition-all cursor-pointer shadow-2xs" onclick="map.panTo({lat: ${item.lat}, lng: ${item.lng}}); focusCard('card-${item.id}');">
+                                    <div class="flex justify-between items-start">
+                                        <div>
+                                            <h4 class="font-bold text-slate-900 text-sm">
+                                                <a href="${naverLandUrl}" target="_blank" onclick="event.stopPropagation();" class="text-indigo-700 hover:underline inline-flex items-center space-x-1">
+                                                    <span>${item.name}</span>
+                                                    <i class="fa-solid fa-arrow-up-right-from-square text-[10px] ml-1"></i>
+                                                </a>
+                                            </h4>
+                                            ${item.isEstimate ? `<span class="text-[10px] text-amber-600 font-semibold">최근 실거래 없음 · 과거 실거래 기반 추정</span>` : ''}
+                                        </div>
+                                        <!-- 가격 정보 강조 -->
+                                        <div class="${priceBoxClass} px-2.5 py-1 rounded-lg text-right">
+                                            <span class="text-[9px] ${priceTextClass} font-semibold block">${priceLabelText}</span>
+                                            <span class="font-black ${priceTextClass} text-sm tracking-tight">${formatPriceText(item)}</span>
+                                        </div>
+                                    </div>
+                                    <!-- 상세 내용 폰트 크기 확대 및 가독성 개선 -->
+                                    <div class="text-[13px] text-slate-700 grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 font-medium">
+                                        <div>📍 지역: <span class="font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">${item.district}</span> <span class="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">${item.dong}</span></div>
+                                        <div>📐 평형: <strong class="text-slate-900">전용 ${item.pyeong}평 (${item.floor}층)</strong></div>
+                                        <div>📅 ${item.isEstimate ? '해당 실거래일' : '계약일'}: <strong class="text-slate-900">${item.date}</strong></div>
+                                        <div>🏗️ 건축년도: <strong class="text-slate-900">${item.buildYear}년</strong></div>
+                                    </div>
+                                </div>
+                            `);
+                        });
+                    }
                 }
+            }
+
+            let nearbyFacilitiesToShow = [];
+            const candidatesWithId = candidates.map((t, idx) => ({ ...t, _id: idx }));
+
+            if (needsNearbyCheck) {
+                // 추가조건(역세권 등)은 전체 대상을 한 번에 좁혀야 하므로, 기존처럼 한꺼번에 처리한다.
+                const uniqueAddresses = [...new Set(candidatesWithId.map(addressOf))];
+                let geocodeMap = {};
+                try {
+                    const res = await fetch('/api/geocode/batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ addresses: uniqueAddresses }),
+                    });
+                    geocodeMap = await res.json();
+                } catch (e) {
+                    container.innerHTML = `<div class="text-center py-8 text-rose-400 text-xs">좌표 변환(지오코딩) 실패: ${e.message}</div>`;
+                    return;
+                }
+
+                let filtered = candidatesWithId.map((t) => {
+                    const loc = geocodeMap[addressOf(t)];
+                    if (!loc) return null;
+                    return {
+                        id: `t${t._id}-${t.aptNm}-${t.floor}-${t.dealDay}`.replace(/\s/g, ''),
+                        name: t.aptNm,
+                        district: t.district || currentSigunguLabel || '',
+                        dong: t.umdNm,
+                        pyeong: t.pyeong,
+                        price: t.dealAmountEok,
+                        monthlyRent: t.monthlyRentManwon || 0,
+                        dealCategory: t.dealCategory || 'trade',
+                        lat: loc.lat,
+                        lng: loc.lng,
+                        date: `${t.dealYear}-${String(t.dealMonth).padStart(2, '0')}-${String(t.dealDay).padStart(2, '0')}`,
+                        floor: t.floor,
+                        buildYear: t.buildYear,
+                        dealingGbn: t.dealingGbn,
+                        estateAgentSggNm: t.estateAgentSggNm,
+                        isEstimate: !!t.isEstimate,
+                        estimateBasisYm: t.estimateBasisYm || null,
+                    };
+                }).filter(Boolean).filter(item => {
+                    const dist = getDistanceFromLatLonInKm(currentLat, currentLng, item.lat, item.lng);
+                    return dist <= searchRadius;
+                });
+
+                if (filtered.length > 0) {
+                    container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">인근 시설(${SUB_COND_LABELS[subCondType]}) 확인 중...</div>`;
+                    try {
+                        const res = await fetch('/api/nearby-check', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                type: subCondType,
+                                items: filtered.map(f => ({ id: f.id, lat: f.lat, lng: f.lng })),
+                            }),
+                        });
+                        const nearbyData = await res.json();
+                        if (res.ok) {
+                            const results = nearbyData.results || [];
+                            const foundIds = new Set(results.filter(r => r.found).map(r => r.id));
+                            filtered = filtered.filter(item => foundIds.has(item.id));
+
+                            const seenFacility = new Set();
+                            results.forEach(r => {
+                                if (!r.found || !r.facility) return;
+                                const key = `${r.facility.lat.toFixed(5)},${r.facility.lng.toFixed(5)}`;
+                                if (seenFacility.has(key)) return;
+                                seenFacility.add(key);
+                                nearbyFacilitiesToShow.push(r.facility);
+                            });
+                        } else {
+                            console.error('[인근 시설 확인 실패]', nearbyData);
+                        }
+                    } catch (e) {
+                        console.error('[인근 시설 확인 실패]', e);
+                    }
+                }
+
+                if (filtered.length === 0) {
+                    setResultCount(0);
+                    if (primaryEstimateInfo?.areaAvgManwonPerPyeong) {
+                        const midPyeong = isFinite(pyeongTo) ? (pyeongFrom + pyeongTo) / 2 : pyeongFrom;
+                        const estimatedEok = Math.round((primaryEstimateInfo.areaAvgManwonPerPyeong * midPyeong / 10000) * 100) / 100;
+                        container.innerHTML = `<div class="text-center py-8 text-slate-500 text-xs leading-relaxed">
+                            조건에 맞는 개별 매물은 없지만, 최근 ${primaryEstimateInfo.monthsUsed.length}개월간 이 지역 평균 평당가는
+                            <strong class="text-indigo-700">${primaryEstimateInfo.areaAvgManwonPerPyeong.toLocaleString()}만원</strong>입니다.<br>
+                            설정하신 평형(${midPyeong}평 기준)으로 환산하면 대략 <strong class="text-indigo-700">${estimatedEok}억</strong> 수준으로 추정됩니다.
+                            <p class="text-slate-400 mt-1">(실거래 기반 추정치이며 실제 매물 시세와 다를 수 있습니다)</p>
+                        </div>`;
+                    } else {
+                        container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">${currentSigunguLabel || ''} ${dealYmdInput} 기준, 설정하신 조건에 맞는 실거래가 없습니다.</div>`;
+                    }
+                    return;
+                }
+
+                container.innerHTML = '';
+                appendItemsToUI(filtered);
+
+            } else {
+                // 일반 조회(추가조건 없음): 주소를 작은 묶음(청크)으로 나눠 순서대로 조회하면서,
+                // 준비되는 대로 즉시 지도/리스트에 반영한다. 전체가 끝나야 하나라도 보이던
+                // 방식보다 체감 속도가 훨씬 빠르다 (카카오 API 호출 총량은 그대로라 안전함).
+                const uniqueAddresses = [...new Set(candidatesWithId.map(addressOf))];
+                const CHUNK_SIZE = 8;
+                const chunks = [];
+                for (let i = 0; i < uniqueAddresses.length; i += CHUNK_SIZE) {
+                    chunks.push(uniqueAddresses.slice(i, i + CHUNK_SIZE));
+                }
+
+                for (const chunk of chunks) {
+                    const chunkSet = new Set(chunk);
+                    let chunkGeocodeMap = {};
+                    try {
+                        const res = await fetch('/api/geocode/batch', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ addresses: chunk }),
+                        });
+                        chunkGeocodeMap = await res.json();
+                    } catch (e) {
+                        console.error('[지오코딩 청크 실패, 계속 진행]', e);
+                        continue; // 이 묶음만 건너뛰고 나머지는 계속 진행
+                    }
+
+                    const chunkItems = candidatesWithId
+                        .filter(t => chunkSet.has(addressOf(t)))
+                        .map((t) => {
+                            const loc = chunkGeocodeMap[addressOf(t)];
+                            if (!loc) return null;
+                            return {
+                                id: `t${t._id}-${t.aptNm}-${t.floor}-${t.dealDay}`.replace(/\s/g, ''),
+                                name: t.aptNm,
+                                district: t.district || currentSigunguLabel || '',
+                                dong: t.umdNm,
+                                pyeong: t.pyeong,
+                                price: t.dealAmountEok,
+                                monthlyRent: t.monthlyRentManwon || 0,
+                                dealCategory: t.dealCategory || 'trade',
+                                lat: loc.lat,
+                                lng: loc.lng,
+                                date: `${t.dealYear}-${String(t.dealMonth).padStart(2, '0')}-${String(t.dealDay).padStart(2, '0')}`,
+                                floor: t.floor,
+                                buildYear: t.buildYear,
+                                dealingGbn: t.dealingGbn,
+                                estateAgentSggNm: t.estateAgentSggNm,
+                                isEstimate: !!t.isEstimate,
+                                estimateBasisYm: t.estimateBasisYm || null,
+                            };
+                        })
+                        .filter(Boolean)
+                        .filter(item => getDistanceFromLatLonInKm(currentLat, currentLng, item.lat, item.lng) <= searchRadius);
+
+                    appendItemsToUI(chunkItems);
+                }
+
+                if (totalAppended === 0) {
+                    setResultCount(0);
+                    if (primaryEstimateInfo?.areaAvgManwonPerPyeong) {
+                        const midPyeong = isFinite(pyeongTo) ? (pyeongFrom + pyeongTo) / 2 : pyeongFrom;
+                        const estimatedEok = Math.round((primaryEstimateInfo.areaAvgManwonPerPyeong * midPyeong / 10000) * 100) / 100;
+                        container.innerHTML = `<div class="text-center py-8 text-slate-500 text-xs leading-relaxed">
+                            조건에 맞는 개별 매물은 없지만, 최근 ${primaryEstimateInfo.monthsUsed.length}개월간 이 지역 평균 평당가는
+                            <strong class="text-indigo-700">${primaryEstimateInfo.areaAvgManwonPerPyeong.toLocaleString()}만원</strong>입니다.<br>
+                            설정하신 평형(${midPyeong}평 기준)으로 환산하면 대략 <strong class="text-indigo-700">${estimatedEok}억</strong> 수준으로 추정됩니다.
+                            <p class="text-slate-400 mt-1">(실거래 기반 추정치이며 실제 매물 시세와 다를 수 있습니다)</p>
+                        </div>`;
+                    } else {
+                        container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">${currentSigunguLabel || ''} ${dealYmdInput} 기준, 설정하신 조건에 맞는 실거래가 없습니다.</div>`;
+                    }
+                    return;
+                }
+            }
+
+            // 지도에 마커가 "모두" 찍히고 난 뒤에만 결과 드로어를 자동으로 연다.
+            // (이 시점엔 markerIndex가 전체 마커 개수로 확정되어 있으므로, 마지막 마커의
+            // 드롭 애니메이션이 끝나는 시각을 정확히 계산해 그때 열 수 있다.)
+            if (markerIndex > 0) {
+                const lastMarkerDelay = (markerIndex - 1) * 150 + 400; // 드롭 애니메이션 여유시간 포함
+                setTimeout(() => toggleDrawer('drawer-results', true), lastMarkerDelay);
             }
 
             // 5) 추가조건(역세권/마트·백화점/공원/학교)으로 찾은 실제 시설을, 아파트 마커와
@@ -1407,6 +1522,7 @@
                     });
 
                     marker.addListener('mouseover', () => {
+                        infoWindowPinned = false;
                         infoWindow.setContent(`
                             <div style="padding:0px; font-family:'Apple SD Gothic Neo',sans-serif;">
                                 <div style="font-weight:700; font-size:13px; color:#0f172a; margin-bottom:2px;">${f.name}</div>
@@ -1415,7 +1531,9 @@
                         `);
                         infoWindow.open(map, marker);
                     });
-                    marker.addListener('mouseout', () => infoWindow.close());
+                    marker.addListener('mouseout', () => {
+                        if (!infoWindowPinned) infoWindow.close();
+                    });
 
                     facilityMarkersList.push(marker);
                 });
