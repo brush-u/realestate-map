@@ -35,6 +35,18 @@
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+
+        /* 모바일 브라우저는 주소창/하단 툴바가 늘었다 줄었다 하면서 100vh를 실제 화면보다
+           크게 잡아, 하단에 고정된 검색 버튼이 화면 밖으로 밀려 안 보이는 문제가 생긴다.
+           100dvh(동적 뷰포트 높이)를 지원하는 브라우저는 이걸로 실제 보이는 높이를 쓴다. */
+        body.h-screen {
+            height: 100vh; /* 폴백 */
+            height: 100dvh;
+        }
+        /* 아이폰 등 하단 홈 인디케이터가 있는 기기에서 버튼이 그 아래 가려지지 않도록 여백 확보 */
+        #search-action-btn {
+            bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+        }
         
         .right-slide-drawer {
             transform: translateX(100%);
@@ -670,6 +682,44 @@
             backdrop.classList.add('opacity-0');
             setTimeout(() => backdrop.classList.add('hidden'), 300);
         }
+
+        // 드로어를 오른쪽으로 손가락으로 긁으면(스와이프) 닫히게 한다 (X 버튼 대안).
+        function setupSwipeToCloseDrawers() {
+            document.querySelectorAll('.right-slide-drawer').forEach(drawer => {
+                let startX = null;
+                let currentX = null;
+
+                drawer.addEventListener('touchstart', (e) => {
+                    startX = e.touches[0].clientX;
+                    currentX = startX;
+                    drawer.style.transition = 'none'; // 드래그하는 동안은 애니메이션 없이 손가락을 그대로 따라가게
+                }, { passive: true });
+
+                drawer.addEventListener('touchmove', (e) => {
+                    if (startX === null) return;
+                    currentX = e.touches[0].clientX;
+                    const delta = currentX - startX;
+                    if (delta > 0) { // 오른쪽으로 긁을 때만 반응 (왼쪽으로 긁는 건 무시)
+                        drawer.style.transform = `translateX(${delta}px)`;
+                    }
+                }, { passive: true });
+
+                const endSwipe = () => {
+                    if (startX === null) return;
+                    const delta = currentX - startX;
+                    drawer.style.transition = ''; // CSS의 원래 트랜지션 복구
+                    drawer.style.transform = '';
+                    if (delta > 80) { // 80px 이상 긁으면 닫힌 것으로 처리
+                        closeAllDrawers();
+                    }
+                    startX = null;
+                    currentX = null;
+                };
+                drawer.addEventListener('touchend', endSwipe);
+                drawer.addEventListener('touchcancel', endSwipe);
+            });
+        }
+        setupSwipeToCloseDrawers();
 
         function toggleCustomInputVisibility() {
             const isCustomSelected = document.getElementById('radio-custom-cond').checked;
@@ -1332,8 +1382,14 @@
                         position: { lat: f.lat, lng: f.lng },
                         map: map,
                         icon: {
-                            url: `http://maps.google.com/mapfiles/ms/icons/${style.color}-dot.png`,
-                            scaledSize: new google.maps.Size(28, 28),
+                            // 매물 마커(핀 모양)와 확실히 구분되도록, 이미지 핀이 아니라
+                            // 순수한 원형 점(SVG 심볼)으로 그린다.
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 8,
+                            fillColor: style.hex,
+                            fillOpacity: 0.95,
+                            strokeColor: '#ffffff',
+                            strokeWeight: 2,
                         },
                         zIndex: 1, // 아파트 마커(기본 zIndex)보다 아래에 깔리도록
                         title: f.name,

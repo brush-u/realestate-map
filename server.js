@@ -148,14 +148,14 @@ app.post('/api/geocode/batch', async (req, res) => {
   }
 
   const uniqueAddresses = [...new Set(addresses)];
-  const CONCURRENCY = 6; // 카카오 API 한도 내에서 속도를 위해 소폭 상향
+  const CONCURRENCY = 10; // 검색 시작 후 첫 마커가 뜨기까지의 대기 시간을 줄이기 위해 상향
   const resultMap = {};
 
   for (let i = 0; i < uniqueAddresses.length; i += CONCURRENCY) {
     const batch = uniqueAddresses.slice(i, i + CONCURRENCY);
     const results = await Promise.all(batch.map(geocodeOne));
     batch.forEach((addr, idx) => { resultMap[addr] = results[idx]; });
-    if (i + CONCURRENCY < uniqueAddresses.length) await sleep(120);
+    if (i + CONCURRENCY < uniqueAddresses.length) await sleep(60);
   }
 
   res.json(resultMap);
