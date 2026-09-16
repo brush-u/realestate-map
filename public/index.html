@@ -242,7 +242,7 @@
                 <div class="flex items-center space-x-1.5 text-[10px] text-slate-400 font-semibold">
                     <span class="w-2 h-2 bg-indigo-600 rounded-full animate-ping flex-shrink-0"></span><span>현재 적용 조건</span>
                 </div>
-                <div id="condition-summary-text" class="text-xs font-black text-indigo-950 tracking-tight truncate">매매 · 아파트 · 0~30억 · 10~80평 · 사용 안 함 (반경 1km)</div>
+                <div id="condition-summary-text" class="text-xs font-black text-indigo-950 tracking-tight truncate">매매 · 아파트 · 0~30억 · 10~80평 · 사용 안 함 (반경 2km)</div>
             </button>
         </div>
 
@@ -303,10 +303,10 @@
                     <label class="text-sm font-bold text-slate-800 flex items-center">
                         <i class="fa-solid fa-compass-drafting text-indigo-600 mr-2"></i>검색 반경 설정
                     </label>
-                    <span id="radius-badge" class="text-xs bg-indigo-50 text-indigo-700 font-bold px-2.5 py-1 rounded-md">반경 1km 내</span>
+                    <span id="radius-badge" class="text-xs bg-indigo-50 text-indigo-700 font-bold px-2.5 py-1 rounded-md">반경 2km 내</span>
                 </div>
                 <div class="space-y-1 pt-1">
-                    <input type="range" id="input-radius" min="1" max="50" value="1" oninput="updateRadiusText(this.value)" class="custom-range-single">
+                    <input type="range" id="input-radius" min="1" max="50" value="2" oninput="updateRadiusText(this.value)" class="custom-range-single">
                     <div class="flex justify-between text-xs font-medium text-slate-400 px-1 pt-1">
                         <span>1km</span>
                         <span>10km</span>
@@ -471,7 +471,7 @@
             <div class="flex items-center space-x-1.5 text-[10px] text-indigo-400 font-semibold">
                 <i class="fa-solid fa-circle-check"></i><span>현재 적용 조건</span>
             </div>
-            <div id="condition-summary-text-mini" class="text-xs font-black text-indigo-950 tracking-tight">매매 · 아파트 · 0~30억 · 10~80평 · 사용 안 함 (반경 1km)</div>
+            <div id="condition-summary-text-mini" class="text-xs font-black text-indigo-950 tracking-tight">매매 · 아파트 · 0~30억 · 10~80평 · 사용 안 함 (반경 2km)</div>
         </button>
 
         <div id="result-container" class="flex-grow overflow-y-auto p-4 space-y-4">
@@ -487,7 +487,7 @@
         let map, centerMarker, radiusCircle;
         let currentLat = 37.5665;
         let currentLng = 126.9780;
-        let searchRadius = 1;
+        let searchRadius = 2;
         let markersList = [];
         let facilityMarkersList = []; // 역세권/마트/공원/학교 등 "추가 조건" 시설 마커 (아파트 마커와 구분)
         let facilityLinesList = [];   // 중심점 -> 시설 마커를 잇는 얇은 연결선
