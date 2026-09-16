@@ -114,7 +114,7 @@ const geocodeCache = new Map();
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-async function geocodeOne(query) {
+async function geocodeOne(query, attempt = 1) {
   if (geocodeCache.has(query)) return geocodeCache.get(query);
   try {
     const { data } = await axios.get('https://dapi.kakao.com/v2/local/search/keyword.json', {
@@ -133,6 +133,13 @@ async function geocodeOne(query) {
   } catch (err) {
     const status = err.response?.status;
     const message = err.response?.data?.message || err.message;
+    // 초당 호출 제한(429)이나 순간적인 5xx는 그냥 실패 처리하면 매물이 조용히 지도에서
+    // 빠져버리니, 짧게 대기 후 최대 2번까지 재시도한다.
+    const isRateLimited = status === 429 || status === 503;
+    if (isRateLimited && attempt <= 2) {
+      await sleep(300 * attempt);
+      return geocodeOne(query, attempt + 1);
+    }
     console.error('[geocodeOne]', query, status, message);
     return null;
   }
@@ -148,14 +155,14 @@ app.post('/api/geocode/batch', async (req, res) => {
   }
 
   const uniqueAddresses = [...new Set(addresses)];
-  const CONCURRENCY = 10; // 검색 시작 후 첫 마커가 뜨기까지의 대기 시간을 줄이기 위해 상향
+  const CONCURRENCY = 6; // 카카오 API 한도를 고려한 안전한 동시 처리 수 (재시도 로직으로 순간 초과는 커버)
   const resultMap = {};
 
   for (let i = 0; i < uniqueAddresses.length; i += CONCURRENCY) {
     const batch = uniqueAddresses.slice(i, i + CONCURRENCY);
     const results = await Promise.all(batch.map(geocodeOne));
     batch.forEach((addr, idx) => { resultMap[addr] = results[idx]; });
-    if (i + CONCURRENCY < uniqueAddresses.length) await sleep(60);
+    if (i + CONCURRENCY < uniqueAddresses.length) await sleep(100);
   }
 
   res.json(resultMap);
@@ -173,7 +180,7 @@ const NEARBY_TYPE_CONFIG = {
   park:   { mode: 'keyword', query: '공원', radius: 500 },  // 카카오 카테고리엔 "공원"이 없어 키워드 검색으로 대체
 };
 
-async function checkNearbyOne(item, cfg) {
+async function checkNearbyOne(item, cfg, attempt = 1) {
   try {
     const url = cfg.mode === 'category'
       ? 'https://dapi.kakao.com/v2/local/search/category.json'
@@ -197,6 +204,13 @@ async function checkNearbyOne(item, cfg) {
       },
     };
   } catch (err) {
+    const status = err.response?.status;
+    // 429(초당 호출 제한)로 실패한 걸 그냥 "시설 없음"으로 처리하면, 실제로는 가까이 있는데도
+    // 결과에서 빠져버려 추가조건을 걸수록 건수가 확 줄어드는 것처럼 보인다. 짧게 대기 후 재시도.
+    if ((status === 429 || status === 503) && attempt <= 2) {
+      await sleep(300 * attempt);
+      return checkNearbyOne(item, cfg, attempt + 1);
+    }
     console.error('[nearby-check]', item.id, err.response?.data || err.message);
     return { id: item.id, found: false };
   }
