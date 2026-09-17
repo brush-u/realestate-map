@@ -1108,7 +1108,7 @@
             };
 
             const rows = [
-                { label: '단지명', render: (it) => `<a href="https://new.land.naver.com/complexes?ms=${it.lat},${it.lng},18&a=APT:PRE:ABYG:JGC:OPST:VL:DDDGG&e=RETAIL" target="_blank" class="font-bold text-slate-900 hover:text-blue-600 hover:underline">${it.name}</a>` },
+                { label: '단지명', render: (it) => `<a href="https://search.naver.com/search.naver?query=${encodeURIComponent(`${it.district} ${it.dong} ${it.name} 아파트 시세`)}" target="_blank" class="font-bold text-slate-900 hover:text-blue-600 hover:underline">${it.name}</a>` },
                 { label: '지역', render: (it) => `<span class="font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-xs">${it.district}</span> <span class="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-xs">${it.dong}</span>` },
                 { label: it => (it.dealCategory === 'rent' ? (it.monthlyRent > 0 ? '월세' : '전세') : '실거래가'), render: (it) => `<span class="font-black ${it.isEstimate ? 'text-amber-700' : 'text-rose-600'}">${formatPriceText(it)}</span>${it.isEstimate ? `<div class="text-[10px] text-amber-600 font-semibold">추정(${it.estimateBasisYm})</div>` : ''}` },
                 { label: '평당가', render: (it) => pricePerPyeongText(it) },
@@ -1414,9 +1414,10 @@
                                 markersList.push(marker);
                             }, currentIdx * DROP_INTERVAL_MS);
 
-                            // 검색어(sk=) 방식은 네이버가 홈으로 튕겨보내는 경우가 있어서,
-                            // 정확한 좌표로 지도를 그 위치에 맞춰 여는 방식을 쓴다.
-                            const naverLandUrl = `https://new.land.naver.com/complexes?ms=${item.lat},${item.lng},18&a=APT:PRE:ABYG:JGC:OPST:VL:DDDGG&e=RETAIL`;
+                            // 네이버부동산 앱 전용 딥링크는 모바일에서 "페이지 없음" 에러가 자주 나서,
+                            // 절대 404가 나지 않는 네이버 통합검색으로 대체한다 (아파트 시세 정보 패널이
+                            // 자동으로 뜨는 경우가 많다).
+                            const naverLandUrl = `https://search.naver.com/search.naver?query=${encodeURIComponent(`${item.district} ${item.dong} ${item.name} 아파트 시세`)}`;
                             const priceBoxClass = item.isEstimate
                                 ? 'bg-amber-50 border border-amber-200'
                                 : 'bg-rose-50 border border-rose-200';
@@ -1523,6 +1524,19 @@
             let nearbyFacilitiesToShow = [];
             const seenFacilityKeys = new Set(); // 실거래/추정 두 단계에 걸쳐 같은 시설이 중복 표시되지 않게
 
+            // 검색 지역 전체의 시설(백화점/역/공원/학교) 목록을 딱 한 번만 가져와 재사용한다.
+            // (실거래 단계, 추정 단계에서 각각 다시 부르지 않도록 캐시) - 매물 개수와 무관하게
+            // API 호출이 고정되어 있어서 반경이 넓어져도 느려지지 않는다.
+            let nearbyFacilityCache = null;
+            async function ensureNearbyFacilities() {
+                if (nearbyFacilityCache) return nearbyFacilityCache;
+                const res = await fetch(`/api/nearby-facilities?type=${subCondType}&lat=${currentLat}&lng=${currentLng}&radiusKm=${searchRadius}`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || data.error || '인근 시설 조회 실패');
+                nearbyFacilityCache = data;
+                return data;
+            }
+
             // 추가조건(역세권 등)으로 찾은 실제 시설을 아파트 마커와 구분되는 색상으로 그린다.
             // 실거래/추정 두 단계에서 각각 호출되므로, 그때그때 "새로" 찾은 시설만 인자로 받는다.
             function drawFacilityMarkers(newFacilities) {
@@ -1623,35 +1637,33 @@
                 if (filtered.length === 0) return;
 
                 try {
-                    const res = await fetch('/api/nearby-check', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            type: subCondType,
-                            items: filtered.map(f => ({ id: f.id, lat: f.lat, lng: f.lng })),
-                        }),
-                    });
-                    const nearbyData = await res.json();
-                    if (res.ok) {
-                        const results = nearbyData.results || [];
-                        const foundIds = new Set(results.filter(r => r.found).map(r => r.id));
-                        filtered = filtered.filter(item => foundIds.has(item.id));
+                    // 지역 전체의 시설 목록은 검색당 한 번만 가져와서 재사용한다 (phase A/B 공용 캐시).
+                    const facilityData = await ensureNearbyFacilities();
+                    const { thresholdMeters, facilities } = facilityData;
 
-                        const newFacilities = [];
-                        results.forEach(r => {
-                            if (!r.found || !r.facility) return;
-                            const key = `${r.facility.lat.toFixed(5)},${r.facility.lng.toFixed(5)}`;
-                            if (seenFacilityKeys.has(key)) return;
+                    const newFacilities = [];
+                    filtered = filtered.filter(item => {
+                        let nearestDist = Infinity;
+                        let nearestFacility = null;
+                        for (const f of facilities) {
+                            const d = getDistanceFromLatLonInKm(item.lat, item.lng, f.lat, f.lng) * 1000; // km -> m
+                            if (d < nearestDist) { nearestDist = d; nearestFacility = f; }
+                        }
+                        if (!nearestFacility || nearestDist > thresholdMeters) return false;
+
+                        const key = `${nearestFacility.lat.toFixed(5)},${nearestFacility.lng.toFixed(5)}`;
+                        if (!seenFacilityKeys.has(key)) {
                             seenFacilityKeys.add(key);
-                            nearbyFacilitiesToShow.push(r.facility);
-                            newFacilities.push(r.facility);
-                        });
-                        drawFacilityMarkers(newFacilities);
-                    } else {
-                        console.error('[인근 시설 확인 실패]', nearbyData);
-                    }
+                            const facilityWithDistance = { ...nearestFacility, distance: nearestDist };
+                            nearbyFacilitiesToShow.push(facilityWithDistance);
+                            newFacilities.push(facilityWithDistance);
+                        }
+                        return true;
+                    });
+                    drawFacilityMarkers(newFacilities);
                 } catch (e) {
                     console.error('[인근 시설 확인 실패]', e);
+                    filtered = []; // 시설 목록 자체를 못 가져왔으면 조건을 검증할 수 없으니 안전하게 0건 처리
                 }
 
                 if (filtered.length > 0) {
