@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>이사갈 곳 한방 검색</title>
+    <title>내 집 한방 뽑기</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 폰트어썸 (아이콘) -->
@@ -220,12 +220,15 @@
 
     <!-- 상단 헤더 -->
     <header class="bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md z-30 flex-shrink-0">
-        <div class="px-4 py-3 flex justify-between items-center">
-            <div class="flex items-center space-x-2">
-                <i class="fa-solid fa-house-chimney text-lg"></i>
-                <h1 class="text-base font-bold tracking-tight">이사갈 곳 한방 검색</h1>
+        <div class="px-4 py-3 flex justify-between items-center gap-2">
+            <div class="flex items-center space-x-2 min-w-0">
+                <i class="fa-solid fa-house-chimney text-lg flex-shrink-0"></i>
+                <div class="leading-tight min-w-0">
+                    <h1 class="text-base font-bold tracking-tight">내 집 한방 뽑기</h1>
+                    <p class="text-[9px] text-white/80 font-medium truncate max-w-[170px] sm:max-w-none">발품은 줄이고, 내 집은 한 번에 - 바쁜 현대인을 위한 실거래 매물 원스톱 솔루션</p>
+                </div>
             </div>
-            <div class="text-xs bg-white/20 px-3 py-1.5 rounded-lg flex items-center space-x-2">
+            <div class="text-xs bg-white/20 px-3 py-1.5 rounded-lg flex items-center space-x-2 flex-shrink-0">
                 <span id="geo-status" class="inline-block w-2 h-2 rounded-full bg-amber-300 animate-pulse"></span>
                 <span id="geo-text">현위치 연동</span>
             </div>
@@ -537,7 +540,7 @@
 
         let sharedAudioCtx = null;
 
-        function playDropSound() {
+        async function playDropSound() {
             try {
                 // 마커마다 새 AudioContext를 만들면 브라우저의 동시 생성 개수 제한에 걸려
                 // 결과가 많을 때 소리가 끊기거나 아예 안 나는 문제가 생긴다. 하나만 만들어 재사용한다.
@@ -545,7 +548,10 @@
                     sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 }
                 if (sharedAudioCtx.state === 'suspended') {
-                    sharedAudioCtx.resume();
+                    // resume()은 비동기라, 기다리지 않고 바로 재생을 시도하면 아직 진짜로
+                    // 깨어나기 전이라 소리가 안 나는 경우가 있었다 (특히 첫 소리나 한동안
+                    // 조용했다가 다시 재생할 때). 완전히 재개될 때까지 기다린 뒤 재생한다.
+                    await sharedAudioCtx.resume();
                 }
                 const audioCtx = sharedAudioCtx;
                 const osc = audioCtx.createOscillator();
@@ -1084,24 +1090,6 @@
             if (bar) bar.classList.add('hidden');
         }
 
-        // 비교 화면에서 특정 매물만 빼기 (동적 id를 CSS 선택자로 조합하면 단지명에 괄호 등
-        // 특수문자가 있을 때 깨질 수 있어 getElementById로 안전하게 찾는다).
-        function removeFromCompare(id) {
-            selectedCompareIds.delete(id);
-            const card = document.getElementById('card-' + id);
-            if (card) {
-                const cb = card.querySelector('.compare-checkbox');
-                if (cb) cb.checked = false;
-            }
-            const bar = document.getElementById('compare-bar');
-            if (selectedCompareIds.size > 0) {
-                document.getElementById('compare-count-text').innerText = selectedCompareIds.size;
-            } else {
-                bar.classList.add('hidden');
-            }
-            openCompareView();
-        }
-
         // 체크한 매물들을 나란히 비교할 수 있는 표를 만들어 비교 드로어에 띄운다.
         function openCompareView() {
             const items = Array.from(selectedCompareIds).map(id => itemDataById[id]).filter(Boolean);
@@ -1113,37 +1101,38 @@
                 return;
             }
 
+            const pricePerPyeongText = (it) => {
+                if (!it.pyeong) return '-';
+                const manwonPerPyeong = Math.round((it.price * 10000) / it.pyeong);
+                return `${manwonPerPyeong.toLocaleString()}만원/평`;
+            };
+
             const rows = [
-                { label: '단지명', render: (it) => `<a href="https://new.land.naver.com/search?sk=${encodeURIComponent(`${it.district} ${it.dong} ${it.name}`)}" target="_blank" class="font-bold text-slate-900 hover:text-blue-600 hover:underline">${it.name}</a>` },
+                { label: '단지명', render: (it) => `<a href="https://new.land.naver.com/complexes?ms=${it.lat},${it.lng},18&a=APT:PRE:ABYG:JGC:OPST:VL:DDDGG&e=RETAIL" target="_blank" class="font-bold text-slate-900 hover:text-blue-600 hover:underline">${it.name}</a>` },
                 { label: '지역', render: (it) => `<span class="font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-xs">${it.district}</span> <span class="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-xs">${it.dong}</span>` },
                 { label: it => (it.dealCategory === 'rent' ? (it.monthlyRent > 0 ? '월세' : '전세') : '실거래가'), render: (it) => `<span class="font-black ${it.isEstimate ? 'text-amber-700' : 'text-rose-600'}">${formatPriceText(it)}</span>${it.isEstimate ? `<div class="text-[10px] text-amber-600 font-semibold">추정(${it.estimateBasisYm})</div>` : ''}` },
+                { label: '평당가', render: (it) => pricePerPyeongText(it) },
                 { label: '평형', render: (it) => `전용 ${it.pyeong}평` },
                 { label: '층', render: (it) => `${it.floor}층` },
                 { label: '건축년도', render: (it) => `${it.buildYear}년` },
                 { label: it => (it.isEstimate ? '해당 실거래일' : '계약일'), render: (it) => it.date },
+                { label: '거래유형', render: (it) => it.dealingGbn || '-' },
+                { label: '중개사 소재지', render: (it) => it.estateAgentSggNm || '-' },
             ];
 
-            const headerCells = items.map(it => `
-                <th class="p-2 text-left border-b border-slate-200 min-w-[140px]">
-                    <button onclick="removeFromCompare('${it.id}')" class="text-slate-300 hover:text-rose-500 float-right" title="비교에서 빼기">
-                        <i class="fa-solid fa-xmark"></i>
-                    </button>
-                </th>
-            `).join('');
-
-            const bodyRows = rows.map((row, rowIdx) => `
-                <tr class="${rowIdx % 2 === 0 ? 'bg-slate-50/60' : ''}">
-                    <td class="p-2 text-xs font-bold text-slate-500 whitespace-nowrap border-b border-slate-100 sticky left-0 bg-white text-right">${typeof row.label === 'function' ? row.label(items[0]) : row.label}</td>
-                    ${items.map(it => `<td class="p-2 text-sm text-slate-800 border-b border-slate-100 text-center">${row.render(it)}</td>`).join('')}
+            const bodyRows = rows.map((row) => `
+                <tr class="odd:bg-white even:bg-slate-50">
+                    <td class="p-2.5 text-xs font-bold text-slate-500 whitespace-nowrap border border-slate-200 sticky left-0 bg-inherit text-right w-20">${typeof row.label === 'function' ? row.label(items[0]) : row.label}</td>
+                    ${items.map(it => `<td class="p-2.5 text-sm text-slate-800 border border-slate-200 text-center min-w-[110px]">${row.render(it)}</td>`).join('')}
                 </tr>
             `).join('');
 
             compareContainer.innerHTML = `
                 <div class="overflow-x-auto -m-4 p-4">
-                    <table class="border-collapse w-full">
-                        <thead><tr>${headerCells}</tr></thead>
+                    <table class="border-collapse w-full border border-slate-200 rounded-lg overflow-hidden">
                         <tbody>${bodyRows}</tbody>
                     </table>
+                    <p class="text-[10px] text-slate-400 mt-3 text-center">비교에서 빼려면 매물 리스트에서 체크를 해제하세요.</p>
                 </div>
             `;
 
@@ -1280,17 +1269,34 @@
 
             const showEmptyMessage = () => {
                 setResultCount(0);
+                const currentConditions = document.getElementById('condition-summary-text')?.innerText || '';
+                const conditionsChip = `
+                    <button onclick="toggleDrawer('drawer-conditions', true)" class="mt-4 inline-block text-left bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 hover:bg-indigo-100 transition cursor-pointer max-w-full">
+                        <div class="text-[10px] text-indigo-400 font-semibold mb-1">현재 적용 조건 (탭해서 조건 변경)</div>
+                        <div class="text-xs font-bold text-indigo-900 whitespace-normal break-keep">${currentConditions}</div>
+                    </button>
+                `;
                 if (primaryEstimateInfo?.areaAvgManwonPerPyeong) {
                     const midPyeong = isFinite(pyeongTo) ? (pyeongFrom + pyeongTo) / 2 : pyeongFrom;
                     const estimatedEok = Math.round((primaryEstimateInfo.areaAvgManwonPerPyeong * midPyeong / 10000) * 100) / 100;
-                    container.innerHTML = `<div class="text-center py-8 text-slate-500 text-xs leading-relaxed">
-                        조건에 맞는 개별 매물은 없지만, 최근 ${primaryEstimateInfo.monthsUsed.length}개월간 이 지역 평균 평당가는
-                        <strong class="text-indigo-700">${primaryEstimateInfo.areaAvgManwonPerPyeong.toLocaleString()}만원</strong>입니다.<br>
-                        설정하신 평형(${midPyeong}평 기준)으로 환산하면 대략 <strong class="text-indigo-700">${estimatedEok}억</strong> 수준으로 추정됩니다.
-                        <p class="text-slate-400 mt-1">(실거래 기반 추정치이며 실제 매물 시세와 다를 수 있습니다)</p>
+                    container.innerHTML = `<div class="text-center py-10 flex flex-col items-center">
+                        <div class="text-6xl mb-1">💥</div>
+                        <div class="text-4xl font-black text-slate-300 tracking-tight">꽝!</div>
+                        <p class="text-xs text-slate-500 leading-relaxed mt-3">
+                            조건에 맞는 개별 매물은 없지만, 최근 ${primaryEstimateInfo.monthsUsed.length}개월간 이 지역 평균 평당가는
+                            <strong class="text-indigo-700">${primaryEstimateInfo.areaAvgManwonPerPyeong.toLocaleString()}만원</strong>입니다.<br>
+                            설정하신 평형(${midPyeong}평 기준)으로 환산하면 대략 <strong class="text-indigo-700">${estimatedEok}억</strong> 수준으로 추정됩니다.
+                            <span class="block text-slate-400 mt-1">(실거래 기반 추정치이며 실제 매물 시세와 다를 수 있습니다)</span>
+                        </p>
+                        ${conditionsChip}
                     </div>`;
                 } else {
-                    container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">${currentSigunguLabel || ''} ${dealYmdInput} 기준, 설정하신 조건에 맞는 실거래가 없습니다.</div>`;
+                    container.innerHTML = `<div class="text-center py-10 flex flex-col items-center">
+                        <div class="text-6xl mb-1">💥</div>
+                        <div class="text-4xl font-black text-slate-300 tracking-tight">꽝!</div>
+                        <p class="text-xs text-slate-400 mt-3">${currentSigunguLabel || ''} ${dealYmdInput} 기준, 설정하신 조건에 맞는 실거래가 없습니다.</p>
+                        ${conditionsChip}
+                    </div>`;
                 }
             };
 
@@ -1407,7 +1413,9 @@
                                 markersList.push(marker);
                             }, currentIdx * DROP_INTERVAL_MS);
 
-                            const naverLandUrl = `https://new.land.naver.com/search?sk=${encodeURIComponent(`${item.district} ${item.dong} ${item.name}`)}`;
+                            // 검색어(sk=) 방식은 네이버가 홈으로 튕겨보내는 경우가 있어서,
+                            // 정확한 좌표로 지도를 그 위치에 맞춰 여는 방식을 쓴다.
+                            const naverLandUrl = `https://new.land.naver.com/complexes?ms=${item.lat},${item.lng},18&a=APT:PRE:ABYG:JGC:OPST:VL:DDDGG&e=RETAIL`;
                             const priceBoxClass = item.isEstimate
                                 ? 'bg-amber-50 border border-amber-200'
                                 : 'bg-rose-50 border border-rose-200';

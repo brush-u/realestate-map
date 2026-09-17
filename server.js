@@ -169,92 +169,106 @@ app.post('/api/geocode/batch', async (req, res) => {
 });
 
 // -----------------------------------------------------------------------
-// 3.5) 인근 시설 여부 확인 (역세권 / 대형마트·백화점 / 공원 / 학교)
-//    카카오 로컬 API의 카테고리·키워드 검색으로 좌표 주변에 해당 시설이 실제로
-//    있는지 확인한다. "추가 조건" 필터가 이 결과를 근거로 매물을 좁힌다.
+// 3.5) 인근 시설 여부 확인 (역세권 / 백화점·아울렛·마트 / 공원 / 학교)
+//    예전엔 매물 하나하나마다 카카오에 "이 근처에 있어?"를 따로 물어봤는데, 매물이
+//    많아질수록 호출이 비례해서 늘어나 느려졌다. 이제는 검색 지역 전체에서 시설을
+//    "한 번만" 찾아두고, 각 매물과의 거리는 서버 호출 없이 단순 계산으로 판정한다.
 // -----------------------------------------------------------------------
-const NEARBY_TYPE_CONFIG = {
-  subway: { mode: 'category', code: 'SW8', radius: 500 },   // 지하철역
-  // 카카오의 "대형마트(MT1)" 카테고리는 이마트·홈플러스 같은 일반 마트와 백화점을
-  // 구분하지 않고 뭉뚱그려서 정확도가 낮다. 백화점/아울렛/쇼핑센터만 명시적으로
-  // 키워드 검색해서 중소규모 마트가 걸러지도록 한다.
-  mart:   { mode: 'keyword_multi', queries: ['백화점', '아울렛', '쇼핑센터'], radius: 1000 },
-  school: { mode: 'category', code: 'SC4', radius: 500 },   // 학교
-  park:   { mode: 'keyword', query: '공원', radius: 500 },  // 카카오 카테고리엔 "공원"이 없어 키워드 검색으로 대체
-};
+const NEARBY_THRESHOLD_M = { subway: 500, mart: 1000, school: 500, park: 500 };
 
-// 카테고리 또는 키워드 하나로 가장 가까운 장소를 찾는다 (429 등 일시적 오류는 재시도).
-async function fetchNearestPlace(item, mode, queryOrCode, radius, attempt = 1) {
-  try {
-    const url = mode === 'category'
-      ? 'https://dapi.kakao.com/v2/local/search/category.json'
-      : 'https://dapi.kakao.com/v2/local/search/keyword.json';
+// 카카오 키워드 검색은 상호명에 "백화점/아울렛"이라는 글자만 들어가면 다 잡는다
+// ("밧데리백화점", "주류백화점" 같은 잡화점도 포함). 실제 대형 유통 브랜드만 인정하도록
+// 화이트리스트로 한 번 더 거른다. MT1(대형마트) 카테고리는 카카오 자체 분류라 신뢰하고
+// 그대로 쓴다.
+const KNOWN_RETAIL_BRANDS = [
+  // 백화점
+  '롯데백화점', '현대백화점', '신세계백화점', '갤러리아백화점', 'AK플라자', 'NC백화점', '더현대',
+  // 아울렛
+  '롯데아울렛', '현대아울렛', '신세계사이먼', '이랜드아울렛', '뉴코아아울렛', '세이브존', '마리오아울렛', '2001아울렛',
+  // 대형 쇼핑몰
+  '스타필드', '타임스퀘어', '코엑스', 'IFC몰', '파르나스몰', '롯데월드몰',
+];
+function isKnownRetailBrand(name) {
+  return KNOWN_RETAIL_BRANDS.some(b => name.includes(b));
+}
+
+// 좌표 하나를 중심으로 반경 내 장소를 모두 찾는다 (페이지네이션 최대 3페이지 = 45건).
+async function fetchFacilitiesInArea(lat, lng, radiusMeters, mode, queryOrCode) {
+  const url = mode === 'category'
+    ? 'https://dapi.kakao.com/v2/local/search/category.json'
+    : 'https://dapi.kakao.com/v2/local/search/keyword.json';
+  const docs = [];
+  for (let page = 1; page <= 3; page++) {
     const params = mode === 'category'
-      ? { category_group_code: queryOrCode, x: item.lng, y: item.lat, radius, sort: 'distance' }
-      : { query: queryOrCode, x: item.lng, y: item.lat, radius, sort: 'distance' };
-
-    const { data } = await axios.get(url, { params, headers: kakaoHeaders });
-    const nearest = (data.documents || []).find(d => Number(d.distance) <= radius);
-    return nearest ? {
-      name: nearest.place_name,
-      lat: Number(nearest.y),
-      lng: Number(nearest.x),
-      distance: Number(nearest.distance),
-    } : null;
-  } catch (err) {
-    const status = err.response?.status;
-    // 429(초당 호출 제한)로 실패한 걸 그냥 "없음"으로 처리하면, 실제로는 가까이 있는데도
-    // 결과에서 빠져버려 추가조건을 걸수록 건수가 확 줄어드는 것처럼 보인다. 짧게 대기 후 재시도.
-    if ((status === 429 || status === 503) && attempt <= 2) {
-      await sleep(300 * attempt);
-      return fetchNearestPlace(item, mode, queryOrCode, radius, attempt + 1);
+      ? { category_group_code: queryOrCode, x: lng, y: lat, radius: radiusMeters, page, size: 15 }
+      : { query: queryOrCode, x: lng, y: lat, radius: radiusMeters, page, size: 15 };
+    try {
+      const { data } = await axios.get(url, { params, headers: kakaoHeaders });
+      docs.push(...(data.documents || []));
+      if (data.meta?.is_end !== false) break; // 다음 페이지 없으면 중단
+    } catch (err) {
+      console.error('[fetchFacilitiesInArea]', mode, queryOrCode, err.response?.data || err.message);
+      break;
     }
-    console.error('[nearby-check]', item.id, mode, queryOrCode, err.response?.data || err.message);
-    return null;
   }
+  return docs.map(d => ({ name: d.place_name, lat: Number(d.y), lng: Number(d.x) }));
 }
 
-async function checkNearbyOne(item, cfg) {
-  let nearest = null;
+// 검색 반경(searchRadius) + 판정 임계값을 더한 범위에서 시설을 한 번만 조회한다.
+// (카카오 검색 반경 상한이 20km라 그 이상은 잘라낸다 - 매우 넓은 반경의 드문 경우)
+app.get('/api/nearby-facilities', async (req, res) => {
+  const { type } = req.query;
+  const lat = parseFloat(req.query.lat);
+  const lng = parseFloat(req.query.lng);
+  const radiusKm = parseFloat(req.query.radiusKm) || 5;
 
-  if (cfg.mode === 'keyword_multi') {
-    // 여러 키워드(백화점/아울렛/쇼핑센터 등)를 동시에 조회해서, 그 중 가장 가까운 것을 채택한다.
-    const results = await Promise.all(cfg.queries.map(q => fetchNearestPlace(item, 'keyword', q, cfg.radius)));
-    nearest = results.filter(Boolean).sort((a, b) => a.distance - b.distance)[0] || null;
-  } else {
-    nearest = await fetchNearestPlace(item, cfg.mode, cfg.mode === 'category' ? cfg.code : cfg.query, cfg.radius);
-  }
-
-  if (!nearest) return { id: item.id, found: false };
-  return { id: item.id, found: true, facility: nearest };
-}
-
-app.post('/api/nearby-check', async (req, res) => {
-  const { items, type } = req.body || {};
-  if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: 'items 배열이 필요합니다.' });
-  }
-  const cfg = NEARBY_TYPE_CONFIG[type];
-  if (!cfg) {
+  const threshold = NEARBY_THRESHOLD_M[type];
+  if (!threshold) {
     return res.status(400).json({ error: `지원하지 않는 type입니다: ${type}` });
+  }
+  if (isNaN(lat) || isNaN(lng)) {
+    return res.status(400).json({ error: 'lat, lng 파라미터가 필요합니다.' });
   }
   if (!KAKAO_REST_API_KEY) {
     return res.status(500).json({ error: 'KAKAO_REST_API_KEY가 서버에 설정되지 않았습니다.' });
   }
 
-  // keyword_multi(백화점/아울렛/쇼핑센터 등)는 항목 하나당 카카오 호출을 여러 번 하므로,
-  // 그만큼 동시 처리 수를 줄여서 초당 호출 제한에 덜 걸리게 한다.
-  const CONCURRENCY = cfg.mode === 'keyword_multi' ? 2 : 5;
-  const BATCH_DELAY_MS = cfg.mode === 'keyword_multi' ? 200 : 100;
-  const results = [];
-  for (let i = 0; i < items.length; i += CONCURRENCY) {
-    const batch = items.slice(i, i + CONCURRENCY);
-    const batchResults = await Promise.all(batch.map(item => checkNearbyOne(item, cfg)));
-    results.push(...batchResults);
-    if (i + CONCURRENCY < items.length) await sleep(BATCH_DELAY_MS);
+  const radiusMeters = Math.min(radiusKm * 1000 + threshold, 20000);
+
+  let facilities = [];
+  try {
+    if (type === 'subway') {
+      facilities = await fetchFacilitiesInArea(lat, lng, radiusMeters, 'category', 'SW8');
+    } else if (type === 'school') {
+      facilities = await fetchFacilitiesInArea(lat, lng, radiusMeters, 'category', 'SC4');
+    } else if (type === 'park') {
+      facilities = await fetchFacilitiesInArea(lat, lng, radiusMeters, 'keyword', '공원');
+    } else if (type === 'mart') {
+      const [martCat, dept, outlet] = await Promise.all([
+        fetchFacilitiesInArea(lat, lng, radiusMeters, 'category', 'MT1'),
+        fetchFacilitiesInArea(lat, lng, radiusMeters, 'keyword', '백화점'),
+        fetchFacilitiesInArea(lat, lng, radiusMeters, 'keyword', '아울렛'),
+      ]);
+      facilities = [
+        ...martCat, // MT1은 카카오 자체 분류라 신뢰 (화이트리스트 불필요)
+        ...dept.filter(f => isKnownRetailBrand(f.name)),
+        ...outlet.filter(f => isKnownRetailBrand(f.name)),
+      ];
+    }
+  } catch (e) {
+    return res.status(502).json({ error: '카카오 장소검색 실패', detail: e.message });
   }
 
-  res.json({ type, results });
+  // 좌표 기준 중복 제거 (같은 지점이 여러 검색어에 겹쳐 나올 수 있음)
+  const seen = new Set();
+  facilities = facilities.filter(f => {
+    const key = `${f.lat.toFixed(5)},${f.lng.toFixed(5)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  res.json({ type, thresholdMeters: threshold, facilities });
 });
 
 // -----------------------------------------------------------------------
@@ -560,7 +574,7 @@ app.get('/api/lawd-codes', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`이사갈 곳 한방 검색 서버 실행 중: http://localhost:${PORT}`);
+  console.log(`내 집 한방 뽑기 서버 실행 중: http://localhost:${PORT}`);
   if (!GOOGLE_MAPS_API_KEY) console.warn('⚠️  GOOGLE_MAPS_API_KEY가 .env에 설정되지 않았습니다. (지도 렌더링용)');
   if (!KAKAO_REST_API_KEY) console.warn('⚠️  KAKAO_REST_API_KEY가 .env에 설정되지 않았습니다. (좌표<->주소 변환용, 결제 등록 불필요)');
   if (!MOLIT_API_KEY) console.warn('⚠️  MOLIT_API_KEY가 .env에 설정되지 않았습니다.');
