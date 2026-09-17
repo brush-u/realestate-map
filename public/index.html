@@ -1269,6 +1269,7 @@
 
             const showEmptyMessage = () => {
                 setResultCount(0);
+                toggleDrawer('drawer-results', true); // 마커가 하나도 없으니 기다릴 필요 없이 바로 보여준다
                 const currentConditions = document.getElementById('condition-summary-text')?.innerText || '';
                 const conditionsChip = `
                     <button onclick="toggleDrawer('drawer-conditions', true)" class="mt-4 inline-block text-left bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 hover:bg-indigo-100 transition cursor-pointer max-w-full">
@@ -1280,8 +1281,8 @@
                     const midPyeong = isFinite(pyeongTo) ? (pyeongFrom + pyeongTo) / 2 : pyeongFrom;
                     const estimatedEok = Math.round((primaryEstimateInfo.areaAvgManwonPerPyeong * midPyeong / 10000) * 100) / 100;
                     container.innerHTML = `<div class="text-center py-10 flex flex-col items-center">
-                        <div class="text-6xl mb-1">💥</div>
-                        <div class="text-4xl font-black text-slate-300 tracking-tight">꽝!</div>
+                        <div class="text-9xl mb-2">💥</div>
+                        <div class="text-7xl font-black text-slate-400 tracking-tight">꽝!</div>
                         <p class="text-xs text-slate-500 leading-relaxed mt-3">
                             조건에 맞는 개별 매물은 없지만, 최근 ${primaryEstimateInfo.monthsUsed.length}개월간 이 지역 평균 평당가는
                             <strong class="text-indigo-700">${primaryEstimateInfo.areaAvgManwonPerPyeong.toLocaleString()}만원</strong>입니다.<br>
@@ -1292,8 +1293,8 @@
                     </div>`;
                 } else {
                     container.innerHTML = `<div class="text-center py-10 flex flex-col items-center">
-                        <div class="text-6xl mb-1">💥</div>
-                        <div class="text-4xl font-black text-slate-300 tracking-tight">꽝!</div>
+                        <div class="text-9xl mb-2">💥</div>
+                        <div class="text-7xl font-black text-slate-400 tracking-tight">꽝!</div>
                         <p class="text-xs text-slate-400 mt-3">${currentSigunguLabel || ''} ${dealYmdInput} 기준, 설정하신 조건에 맞는 실거래가 없습니다.</p>
                         ${conditionsChip}
                     </div>`;
