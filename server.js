@@ -175,45 +175,58 @@ app.post('/api/geocode/batch', async (req, res) => {
 // -----------------------------------------------------------------------
 const NEARBY_TYPE_CONFIG = {
   subway: { mode: 'category', code: 'SW8', radius: 500 },   // 지하철역
-  mart:   { mode: 'category', code: 'MT1', radius: 1000 },  // 대형마트 (백화점 상당수 포함)
+  // 카카오의 "대형마트(MT1)" 카테고리는 이마트·홈플러스 같은 일반 마트와 백화점을
+  // 구분하지 않고 뭉뚱그려서 정확도가 낮다. 백화점/아울렛/쇼핑센터만 명시적으로
+  // 키워드 검색해서 중소규모 마트가 걸러지도록 한다.
+  mart:   { mode: 'keyword_multi', queries: ['백화점', '아울렛', '쇼핑센터'], radius: 1000 },
   school: { mode: 'category', code: 'SC4', radius: 500 },   // 학교
   park:   { mode: 'keyword', query: '공원', radius: 500 },  // 카카오 카테고리엔 "공원"이 없어 키워드 검색으로 대체
 };
 
-async function checkNearbyOne(item, cfg, attempt = 1) {
+// 카테고리 또는 키워드 하나로 가장 가까운 장소를 찾는다 (429 등 일시적 오류는 재시도).
+async function fetchNearestPlace(item, mode, queryOrCode, radius, attempt = 1) {
   try {
-    const url = cfg.mode === 'category'
+    const url = mode === 'category'
       ? 'https://dapi.kakao.com/v2/local/search/category.json'
       : 'https://dapi.kakao.com/v2/local/search/keyword.json';
-    const params = cfg.mode === 'category'
-      ? { category_group_code: cfg.code, x: item.lng, y: item.lat, radius: cfg.radius, sort: 'distance' }
-      : { query: cfg.query, x: item.lng, y: item.lat, radius: cfg.radius, sort: 'distance' };
+    const params = mode === 'category'
+      ? { category_group_code: queryOrCode, x: item.lng, y: item.lat, radius, sort: 'distance' }
+      : { query: queryOrCode, x: item.lng, y: item.lat, radius, sort: 'distance' };
 
     const { data } = await axios.get(url, { params, headers: kakaoHeaders });
-    const nearest = (data.documents || []).find(d => Number(d.distance) <= cfg.radius);
-    if (!nearest) return { id: item.id, found: false };
-    return {
-      id: item.id,
-      found: true,
-      // 실제로 매칭된 시설 정보 - 프론트에서 지도에 별도 마커로 표시하는 데 사용
-      facility: {
-        name: nearest.place_name,
-        lat: Number(nearest.y),
-        lng: Number(nearest.x),
-        distance: Number(nearest.distance),
-      },
-    };
+    const nearest = (data.documents || []).find(d => Number(d.distance) <= radius);
+    return nearest ? {
+      name: nearest.place_name,
+      lat: Number(nearest.y),
+      lng: Number(nearest.x),
+      distance: Number(nearest.distance),
+    } : null;
   } catch (err) {
     const status = err.response?.status;
-    // 429(초당 호출 제한)로 실패한 걸 그냥 "시설 없음"으로 처리하면, 실제로는 가까이 있는데도
+    // 429(초당 호출 제한)로 실패한 걸 그냥 "없음"으로 처리하면, 실제로는 가까이 있는데도
     // 결과에서 빠져버려 추가조건을 걸수록 건수가 확 줄어드는 것처럼 보인다. 짧게 대기 후 재시도.
     if ((status === 429 || status === 503) && attempt <= 2) {
       await sleep(300 * attempt);
-      return checkNearbyOne(item, cfg, attempt + 1);
+      return fetchNearestPlace(item, mode, queryOrCode, radius, attempt + 1);
     }
-    console.error('[nearby-check]', item.id, err.response?.data || err.message);
-    return { id: item.id, found: false };
+    console.error('[nearby-check]', item.id, mode, queryOrCode, err.response?.data || err.message);
+    return null;
   }
+}
+
+async function checkNearbyOne(item, cfg) {
+  let nearest = null;
+
+  if (cfg.mode === 'keyword_multi') {
+    // 여러 키워드(백화점/아울렛/쇼핑센터 등)를 동시에 조회해서, 그 중 가장 가까운 것을 채택한다.
+    const results = await Promise.all(cfg.queries.map(q => fetchNearestPlace(item, 'keyword', q, cfg.radius)));
+    nearest = results.filter(Boolean).sort((a, b) => a.distance - b.distance)[0] || null;
+  } else {
+    nearest = await fetchNearestPlace(item, cfg.mode, cfg.mode === 'category' ? cfg.code : cfg.query, cfg.radius);
+  }
+
+  if (!nearest) return { id: item.id, found: false };
+  return { id: item.id, found: true, facility: nearest };
 }
 
 app.post('/api/nearby-check', async (req, res) => {
@@ -229,13 +242,16 @@ app.post('/api/nearby-check', async (req, res) => {
     return res.status(500).json({ error: 'KAKAO_REST_API_KEY가 서버에 설정되지 않았습니다.' });
   }
 
-  const CONCURRENCY = 5;
+  // keyword_multi(백화점/아울렛/쇼핑센터 등)는 항목 하나당 카카오 호출을 여러 번 하므로,
+  // 그만큼 동시 처리 수를 줄여서 초당 호출 제한에 덜 걸리게 한다.
+  const CONCURRENCY = cfg.mode === 'keyword_multi' ? 2 : 5;
+  const BATCH_DELAY_MS = cfg.mode === 'keyword_multi' ? 200 : 100;
   const results = [];
   for (let i = 0; i < items.length; i += CONCURRENCY) {
     const batch = items.slice(i, i + CONCURRENCY);
     const batchResults = await Promise.all(batch.map(item => checkNearbyOne(item, cfg)));
     results.push(...batchResults);
-    if (i + CONCURRENCY < items.length) await sleep(100);
+    if (i + CONCURRENCY < items.length) await sleep(BATCH_DELAY_MS);
   }
 
   res.json({ type, results });

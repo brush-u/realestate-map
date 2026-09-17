@@ -425,7 +425,7 @@
                         <input type="radio" name="sub-cond" value="subway" class="accent-indigo-600 w-4 h-4"> <span class="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span><span>역세권 (지하철역 500m 이내)</span>
                     </label>
                     <label class="flex items-center space-x-2.5 cursor-pointer p-1">
-                        <input type="radio" name="sub-cond" value="mart" class="accent-indigo-600 w-4 h-4"> <span class="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block"></span><span>대형마트·백화점 근처 (1km 이내)</span>
+                        <input type="radio" name="sub-cond" value="mart" class="accent-indigo-600 w-4 h-4"> <span class="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block"></span><span>백화점·아울렛·쇼핑센터 근처 (1km 이내)</span>
                     </label>
                     <label class="flex items-center space-x-2.5 cursor-pointer p-1">
                         <input type="radio" name="sub-cond" value="park" class="accent-indigo-600 w-4 h-4"> <span class="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span><span>공원 근처 (숲세권, 500m 이내)</span>
@@ -520,7 +520,7 @@
 
         const FACILITY_STYLE = {
             subway: { color: 'blue',   hex: '#3b82f6', label: '지하철역' },
-            mart:   { color: 'orange', hex: '#f97316', label: '대형마트·백화점' },
+            mart:   { color: 'orange', hex: '#f97316', label: '백화점·아울렛·쇼핑센터' },
             park:   { color: 'green',  hex: '#22c55e', label: '공원' },
             school: { color: 'purple', hex: '#a855f7', label: '학교' },
         };
@@ -839,7 +839,7 @@
         const SUB_COND_LABELS = {
             '사용 안 함': '사용 안 함',
             subway: '역세권',
-            mart: '대형마트·백화점 근처',
+            mart: '백화점·아울렛·쇼핑센터',
             park: '공원 근처',
             school: '학교 근처',
         };
@@ -1028,7 +1028,11 @@
             // 중심 지역이 이미 있고 반경이 작으면(한 구를 잘 안 벗어나는 수준) 추가 호출을 아낀다.
             if (areas.length > 0 && searchRadius <= 4) return areas;
 
-            const bearings = [0, 90, 180, 270]; // 북, 동, 남, 서
+            // 예전엔 4방향(N/E/S/W)만 보고 지역 상한(4개)에 걸리면 서쪽 등 나중 순서 방향은
+            // 결과가 와도 아예 확인도 안 하고 버렸다 - 그래서 반경을 넓혀도 한쪽만 채워지는
+            // 문제가 있었다. 8방향으로 촘촘히 보고, 상한도 올려서 원 전체를 실제로 커버한다.
+            const MAX_AREAS = 8;
+            const bearings = [0, 45, 90, 135, 180, 225, 270, 315]; // 북, 북동, 동, 남동, 남, 남서, 서, 북서
             const points = bearings.map(b => destinationPoint(currentLat, currentLng, searchRadius, b));
 
             const settled = await Promise.allSettled(
@@ -1036,7 +1040,7 @@
             );
 
             for (const r of settled) {
-                if (areas.length >= 4) break; // 지역마다 추정 시세까지 조회하므로 과도한 API 호출을 막기 위해 상한
+                if (areas.length >= MAX_AREAS) break;
                 if (r.status !== 'fulfilled') continue;
                 const data = r.value;
                 if (data && data.supported && !seen.has(data.lawdCd)) {
@@ -1508,19 +1512,64 @@
             }
 
             let nearbyFacilitiesToShow = [];
+            const seenFacilityKeys = new Set(); // 실거래/추정 두 단계에 걸쳐 같은 시설이 중복 표시되지 않게
 
-            if (needsNearbyCheck) {
-                // 추가조건(역세권 등)은 전체 대상(실거래+추정)을 한 번에 좁혀야 하므로,
-                // 이 경로에서는 추정치도 미리 기다려서 합친다 (기존 방식 유지).
-                const estimateCandidates = await fetchEstimateCandidates();
-                candidates = [...candidates, ...estimateCandidates];
+            // 추가조건(역세권 등)으로 찾은 실제 시설을 아파트 마커와 구분되는 색상으로 그린다.
+            // 실거래/추정 두 단계에서 각각 호출되므로, 그때그때 "새로" 찾은 시설만 인자로 받는다.
+            function drawFacilityMarkers(newFacilities) {
+                if (newFacilities.length === 0) return;
+                const style = FACILITY_STYLE[subCondType];
+                newFacilities.forEach(f => {
+                    const line = new google.maps.Polyline({
+                        path: [
+                            { lat: currentLat, lng: currentLng },
+                            { lat: f.lat, lng: f.lng },
+                        ],
+                        strokeColor: style.hex,
+                        strokeOpacity: 0.5,
+                        strokeWeight: 1.5,
+                        map: map,
+                        zIndex: 0,
+                    });
+                    facilityLinesList.push(line);
 
-                if (candidates.length === 0) {
-                    showEmptyMessage();
-                    return;
-                }
+                    const marker = new google.maps.Marker({
+                        position: { lat: f.lat, lng: f.lng },
+                        map: map,
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 8,
+                            fillColor: style.hex,
+                            fillOpacity: 0.95,
+                            strokeColor: '#ffffff',
+                            strokeWeight: 2,
+                        },
+                        zIndex: 1,
+                        title: f.name,
+                    });
 
-                const candidatesWithId = candidates.map((t) => ({ ...t, _id: globalCandidateSeq++ }));
+                    const showFacilityInfo = () => {
+                        infoWindow.setContent(`
+                            <div style="padding:0px; font-family:'Apple SD Gothic Neo',sans-serif;">
+                                <div style="font-weight:700; font-size:13px; color:#0f172a; margin-bottom:2px;">${f.name}</div>
+                                <div style="font-size:12px; color:#64748b;">${style.label} · ${Math.round(f.distance)}m</div>
+                            </div>
+                        `);
+                        infoWindow.open(map, marker);
+                    };
+                    marker.addListener('mouseover', () => { infoWindowPinned = false; showFacilityInfo(); });
+                    marker.addListener('click', () => { infoWindowPinned = true; showFacilityInfo(); });
+                    marker.addListener('mouseout', () => { if (!infoWindowPinned) infoWindow.close(); });
+
+                    facilityMarkersList.push(marker);
+                });
+            }
+
+            // 후보 목록을 지오코딩 -> 반경 필터 -> 인근시설 확인까지 거쳐 지도/리스트에 반영한다.
+            // (실거래 먼저 빠르게 이 함수를 호출하고, 추정 시세는 백그라운드에서 다시 호출한다.)
+            async function geocodeAndNearbyCheckRender(candidateList) {
+                if (candidateList.length === 0) return;
+                const candidatesWithId = candidateList.map((t) => ({ ...t, _id: globalCandidateSeq++ }));
                 const uniqueAddresses = [...new Set(candidatesWithId.map(addressOf))];
                 let geocodeMap = {};
                 try {
@@ -1531,7 +1580,7 @@
                     });
                     geocodeMap = await res.json();
                 } catch (e) {
-                    container.innerHTML = `<div class="text-center py-8 text-rose-400 text-xs">좌표 변환(지오코딩) 실패: ${e.message}</div>`;
+                    console.error('[지오코딩 실패]', e);
                     return;
                 }
 
@@ -1562,46 +1611,64 @@
                     return dist <= searchRadius;
                 });
 
-                if (filtered.length > 0) {
-                    container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">인근 시설(${SUB_COND_LABELS[subCondType]}) 확인 중...</div>`;
-                    try {
-                        const res = await fetch('/api/nearby-check', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                type: subCondType,
-                                items: filtered.map(f => ({ id: f.id, lat: f.lat, lng: f.lng })),
-                            }),
-                        });
-                        const nearbyData = await res.json();
-                        if (res.ok) {
-                            const results = nearbyData.results || [];
-                            const foundIds = new Set(results.filter(r => r.found).map(r => r.id));
-                            filtered = filtered.filter(item => foundIds.has(item.id));
+                if (filtered.length === 0) return;
 
-                            const seenFacility = new Set();
-                            results.forEach(r => {
-                                if (!r.found || !r.facility) return;
-                                const key = `${r.facility.lat.toFixed(5)},${r.facility.lng.toFixed(5)}`;
-                                if (seenFacility.has(key)) return;
-                                seenFacility.add(key);
-                                nearbyFacilitiesToShow.push(r.facility);
-                            });
-                        } else {
-                            console.error('[인근 시설 확인 실패]', nearbyData);
-                        }
-                    } catch (e) {
-                        console.error('[인근 시설 확인 실패]', e);
+                try {
+                    const res = await fetch('/api/nearby-check', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            type: subCondType,
+                            items: filtered.map(f => ({ id: f.id, lat: f.lat, lng: f.lng })),
+                        }),
+                    });
+                    const nearbyData = await res.json();
+                    if (res.ok) {
+                        const results = nearbyData.results || [];
+                        const foundIds = new Set(results.filter(r => r.found).map(r => r.id));
+                        filtered = filtered.filter(item => foundIds.has(item.id));
+
+                        const newFacilities = [];
+                        results.forEach(r => {
+                            if (!r.found || !r.facility) return;
+                            const key = `${r.facility.lat.toFixed(5)},${r.facility.lng.toFixed(5)}`;
+                            if (seenFacilityKeys.has(key)) return;
+                            seenFacilityKeys.add(key);
+                            nearbyFacilitiesToShow.push(r.facility);
+                            newFacilities.push(r.facility);
+                        });
+                        drawFacilityMarkers(newFacilities);
+                    } else {
+                        console.error('[인근 시설 확인 실패]', nearbyData);
                     }
+                } catch (e) {
+                    console.error('[인근 시설 확인 실패]', e);
                 }
 
-                if (filtered.length === 0) {
+                if (filtered.length > 0) {
+                    const delay = appendItemsToUI(filtered);
+                    if (delay > 0) lastAppendDelay = delay;
+                }
+            }
+
+            if (needsNearbyCheck) {
+                if (candidates.length === 0) {
+                    // 실거래가 하나도 없으면 추정치라도 있는지 여기서는 기다려서 확인한다.
+                    container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">실거래가 없어 최근 실거래 기반 추정 시세를 확인하는 중...</div>`;
+                    const estimateCandidates = await fetchEstimateCandidates();
+                    await geocodeAndNearbyCheckRender(estimateCandidates);
+                } else {
+                    // 실거래는 먼저 빠르게 확인해서 보여주고, 추정 시세는 백그라운드에서 이어붙인다.
+                    await geocodeAndNearbyCheckRender(candidates);
+                    fetchEstimateCandidates()
+                        .then(estimateCandidates => geocodeAndNearbyCheckRender(estimateCandidates))
+                        .catch(e => console.error('[백그라운드 추정 시세 실패]', e));
+                }
+
+                if (totalAppended === 0) {
                     showEmptyMessage();
                     return;
                 }
-
-                container.innerHTML = '';
-                lastAppendDelay = appendItemsToUI(filtered);
 
             } else {
                 // 일반 조회(추가조건 없음): 실거래가 있으면 즉시 지오코딩해서 보여주고,
@@ -1630,67 +1697,6 @@
             // 알려주는 "그 청크의 마지막 마커가 떨어지는 시각"을 그대로 쓰면 정확하다.)
             if (lastAppendDelay > 0) {
                 setTimeout(() => toggleDrawer('drawer-results', true), lastAppendDelay);
-            }
-
-            // 5) 추가조건(역세권/마트·백화점/공원/학교)으로 찾은 실제 시설을, 아파트 마커와
-            //    구분되는 색상의 별도 마커로 지도에 표시한다.
-            if (nearbyFacilitiesToShow.length > 0) {
-                const style = FACILITY_STYLE[subCondType];
-                nearbyFacilitiesToShow.forEach(f => {
-                    // 중심점(검색 기준 좌표) -> 시설까지 얇은 연결선
-                    const line = new google.maps.Polyline({
-                        path: [
-                            { lat: currentLat, lng: currentLng },
-                            { lat: f.lat, lng: f.lng },
-                        ],
-                        strokeColor: style.hex,
-                        strokeOpacity: 0.5,
-                        strokeWeight: 1.5,
-                        map: map,
-                        zIndex: 0,
-                    });
-                    facilityLinesList.push(line);
-
-                    const marker = new google.maps.Marker({
-                        position: { lat: f.lat, lng: f.lng },
-                        map: map,
-                        icon: {
-                            // 매물 마커(핀 모양)와 확실히 구분되도록, 이미지 핀이 아니라
-                            // 순수한 원형 점(SVG 심볼)으로 그린다.
-                            path: google.maps.SymbolPath.CIRCLE,
-                            scale: 8,
-                            fillColor: style.hex,
-                            fillOpacity: 0.95,
-                            strokeColor: '#ffffff',
-                            strokeWeight: 2,
-                        },
-                        zIndex: 1, // 아파트 마커(기본 zIndex)보다 아래에 깔리도록
-                        title: f.name,
-                    });
-
-                    const showFacilityInfo = () => {
-                        infoWindow.setContent(`
-                            <div style="padding:0px; font-family:'Apple SD Gothic Neo',sans-serif;">
-                                <div style="font-weight:700; font-size:13px; color:#0f172a; margin-bottom:2px;">${f.name}</div>
-                                <div style="font-size:12px; color:#64748b;">${style.label} · ${Math.round(f.distance)}m</div>
-                            </div>
-                        `);
-                        infoWindow.open(map, marker);
-                    };
-                    marker.addListener('mouseover', () => {
-                        infoWindowPinned = false;
-                        showFacilityInfo();
-                    });
-                    marker.addListener('click', () => {
-                        infoWindowPinned = true;
-                        showFacilityInfo();
-                    });
-                    marker.addListener('mouseout', () => {
-                        if (!infoWindowPinned) infoWindow.close();
-                    });
-
-                    facilityMarkersList.push(marker);
-                });
             }
         }
     </script>
