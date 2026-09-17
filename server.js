@@ -544,7 +544,7 @@ app.get('/api/lawd-codes', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`실거래 한방검색 서버 실행 중: http://localhost:${PORT}`);
+  console.log(`이사갈 곳 한방 검색 서버 실행 중: http://localhost:${PORT}`);
   if (!GOOGLE_MAPS_API_KEY) console.warn('⚠️  GOOGLE_MAPS_API_KEY가 .env에 설정되지 않았습니다. (지도 렌더링용)');
   if (!KAKAO_REST_API_KEY) console.warn('⚠️  KAKAO_REST_API_KEY가 .env에 설정되지 않았습니다. (좌표<->주소 변환용, 결제 등록 불필요)');
   if (!MOLIT_API_KEY) console.warn('⚠️  MOLIT_API_KEY가 .env에 설정되지 않았습니다.');

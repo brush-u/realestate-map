@@ -1,5 +1,5 @@
 # =========================================================================
-# 실거래 한방검색 (realestate-map) - GitHub push + Vercel 배포 스크립트
+# 실거래 한방검색 (realestate-map) - GitHub push + Cloud Run 자동 배포 스크립트
 # 실행 위치: D:\workspace\realestate-map (PowerShell)
 # =========================================================================
 
@@ -9,16 +9,19 @@
 #
 # git init
 # git add .
-# git commit -m "실거래 한방검색 - Vercel 배포용 서버리스 구조 추가 (api/index.js, vercel.json)"
+# git commit -m "실거래 한방검색 - Cloud Run 배포용 Dockerfile 추가"
 # git branch -M main
 # git remote add origin https://<본인의 GitHub Personal Access Token>@github.com/brush-u/realestate-map.git
 # git push -u origin main
 #
-# 이후 Vercel 대시보드에서:
-#   - GitHub 저장소 Import
-#   - Settings > Build and Deployment > Framework Preset = "Other"로 지정 후 Save
-#   - Settings > Environment Variables 에 GOOGLE_MAPS_API_KEY / KAKAO_REST_API_KEY / MOLIT_API_KEY 등록
-#   - Google Cloud Console에서 Maps API 키의 허용 도메인에 배포 주소(예: https://realestate-map-coral.vercel.app/*) 추가
+# 이후 Google Cloud Run 콘솔(console.cloud.google.com/run)에서:
+#   - 서비스 만들기 > "저장소에서 지속적으로 배포" 선택
+#   - Cloud Build로 GitHub 계정 연결 후 brush-u/realestate-map 저장소, main 브랜치 선택
+#   - 빌드 유형: Dockerfile (저장소에 포함된 Dockerfile 사용)
+#   - 리전: asia-northeast3 (서울)
+#   - 인증되지 않은 호출 허용 체크
+#   - 환경 변수에 GOOGLE_MAPS_API_KEY / KAKAO_REST_API_KEY / MOLIT_API_KEY 등록
+#   - Google Cloud Console에서 Maps API 키의 허용 도메인에 배포 주소(예: https://realestate-map-xxxxxxxxxx-du.a.run.app/*) 추가
 
 # -------------------------------------------------------------------------
 # [2] 코드를 수정할 때마다 반복 실행 (이 스크립트의 실제 목적)
@@ -43,8 +46,9 @@ if ($LASTEXITCODE -ne 0) {
     exit
 }
 
-Write-Host "`n[4/4] GitHub로 push (Vercel이 자동으로 재배포를 시작합니다)" -ForegroundColor Cyan
+Write-Host "`n[4/4] GitHub로 push (Cloud Build 트리거가 감지해서 자동으로 다시 빌드/배포합니다)" -ForegroundColor Cyan
 git push
 
-Write-Host "`n완료! Vercel 대시보드(Deployments 탭)에서 새 배포 진행 상황을 확인하세요." -ForegroundColor Green
-Write-Host "https://vercel.com/brushu1/realestate-map/deployments" -ForegroundColor Green
+Write-Host "`n완료! Cloud Run 콘솔에서 새 빌드/배포 진행 상황을 확인하세요." -ForegroundColor Green
+Write-Host "https://console.cloud.google.com/run" -ForegroundColor Green
+Write-Host "(빌드 로그는 Cloud Build 기록에서도 확인 가능: https://console.cloud.google.com/cloud-build/builds)" -ForegroundColor Green

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>실거래 한방검색</title>
+    <title>이사갈 곳 한방 검색</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 폰트어썸 (아이콘) -->
@@ -223,7 +223,7 @@
         <div class="px-4 py-3 flex justify-between items-center">
             <div class="flex items-center space-x-2">
                 <i class="fa-solid fa-house-chimney text-lg"></i>
-                <h1 class="text-base font-bold tracking-tight">실거래 한방검색</h1>
+                <h1 class="text-base font-bold tracking-tight">이사갈 곳 한방 검색</h1>
             </div>
             <div class="text-xs bg-white/20 px-3 py-1.5 rounded-lg flex items-center space-x-2">
                 <span id="geo-status" class="inline-block w-2 h-2 rounded-full bg-amber-300 animate-pulse"></span>
@@ -1129,8 +1129,8 @@
 
             const bodyRows = rows.map((row, rowIdx) => `
                 <tr class="${rowIdx % 2 === 0 ? 'bg-slate-50/60' : ''}">
-                    <td class="p-2 text-xs font-bold text-slate-500 whitespace-nowrap border-b border-slate-100 sticky left-0 bg-white">${typeof row.label === 'function' ? row.label(items[0]) : row.label}</td>
-                    ${items.map(it => `<td class="p-2 text-sm text-slate-800 border-b border-slate-100">${row.render(it)}</td>`).join('')}
+                    <td class="p-2 text-xs font-bold text-slate-500 whitespace-nowrap border-b border-slate-100 sticky left-0 bg-white text-right">${typeof row.label === 'function' ? row.label(items[0]) : row.label}</td>
+                    ${items.map(it => `<td class="p-2 text-sm text-slate-800 border-b border-slate-100 text-center">${row.render(it)}</td>`).join('')}
                 </tr>
             `).join('');
 
