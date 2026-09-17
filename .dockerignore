@@ -1,0 +1,10 @@
+node_modules
+.env
+.env.yaml
+.git
+.gitignore
+*.log
+.vercel
+vercel.json
+api
+README.md

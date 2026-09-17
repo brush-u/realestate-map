@@ -480,6 +480,30 @@
                 <p>조건을 설정하고 <strong class="text-indigo-600">'실거래가 조회'</strong>를 눌러보세요!</p>
             </div>
         </div>
+
+        <!-- 체크박스로 선택한 매물이 있을 때만 나타나는 비교하기 바 -->
+        <div id="compare-bar" class="hidden p-3 border-t border-slate-200 bg-white flex items-center justify-between gap-2 shadow-[0_-4px_10px_rgba(0,0,0,0.04)]">
+            <span class="text-sm font-bold text-slate-700"><span id="compare-count-text">0</span>개 선택됨</span>
+            <div class="flex items-center gap-2">
+                <button onclick="clearCompareSelection()" class="px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 rounded-lg transition">선택 해제</button>
+                <button onclick="openCompareView()" class="px-4 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition">비교하기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 드로어 4: 선택 매물 비교 -->
+    <div id="drawer-compare" class="fixed top-0 right-0 bottom-0 w-full max-w-md bg-white z-50 shadow-2xl right-slide-drawer flex flex-col">
+        <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+            <h2 class="text-base font-bold text-slate-900 flex items-center">
+                <i class="fa-solid fa-scale-balanced text-indigo-600 mr-2"></i>선택 매물 비교
+            </h2>
+            <button onclick="toggleDrawer('drawer-compare', false)" class="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+        </div>
+        <div id="compare-container" class="flex-grow overflow-auto p-4">
+            <div class="text-center py-10 text-slate-400 text-xs">비교할 매물을 리스트에서 체크해주세요.</div>
+        </div>
     </div>
 
     <!-- 스크립트 로직 -->
@@ -489,6 +513,8 @@
         let currentLng = 126.9780;
         let searchRadius = 2;
         let markersList = [];
+        let itemDataById = {};          // 비교하기 기능용 - 렌더링된 매물 데이터를 id로 조회
+        let selectedCompareIds = new Set(); // 체크박스로 선택한 매물 id 목록
         let facilityMarkersList = []; // 역세권/마트/공원/학교 등 "추가 조건" 시설 마커 (아파트 마커와 구분)
         let facilityLinesList = [];   // 중심점 -> 시설 마커를 잇는 얇은 연결선
 
@@ -896,6 +922,8 @@
                     currentLawdCd = data.lawdCd;
                     currentSigunguLabel = `${data.sido} ${data.sigungu}`;
                     setLawdStatus(`${data.sigungu} (${data.lawdCd})`, 'ok');
+                    const geoText = document.getElementById('geo-text');
+                    if (geoText) geoText.innerText = data.sigungu; // "현위치 연동 완료" 대신 실제 지역명 표시
                 } else {
                     currentLawdCd = null;
                     currentSigunguLabel = data.sigungu ? `${data.sido || ''} ${data.sigungu}`.trim() : null;
@@ -903,6 +931,8 @@
                         currentSigunguLabel ? `${currentSigunguLabel} - 코드 미지원, 직접 입력 필요` : '지원되지 않는 지역',
                         'warn'
                     );
+                    const geoText = document.getElementById('geo-text');
+                    if (geoText && currentSigunguLabel) geoText.innerText = currentSigunguLabel;
                 }
             } catch (e) {
                 console.error(e);
@@ -1030,6 +1060,92 @@
             document.getElementById('result-count-badge-mini').innerText = count > 99 ? '99+' : String(count);
         }
 
+        function toggleCompareSelect(id, checked) {
+            if (checked) selectedCompareIds.add(id);
+            else selectedCompareIds.delete(id);
+
+            const bar = document.getElementById('compare-bar');
+            if (selectedCompareIds.size > 0) {
+                bar.classList.remove('hidden');
+                document.getElementById('compare-count-text').innerText = selectedCompareIds.size;
+            } else {
+                bar.classList.add('hidden');
+            }
+        }
+
+        function clearCompareSelection() {
+            selectedCompareIds.clear();
+            document.querySelectorAll('.compare-checkbox').forEach(cb => { cb.checked = false; });
+            const bar = document.getElementById('compare-bar');
+            if (bar) bar.classList.add('hidden');
+        }
+
+        // 비교 화면에서 특정 매물만 빼기 (동적 id를 CSS 선택자로 조합하면 단지명에 괄호 등
+        // 특수문자가 있을 때 깨질 수 있어 getElementById로 안전하게 찾는다).
+        function removeFromCompare(id) {
+            selectedCompareIds.delete(id);
+            const card = document.getElementById('card-' + id);
+            if (card) {
+                const cb = card.querySelector('.compare-checkbox');
+                if (cb) cb.checked = false;
+            }
+            const bar = document.getElementById('compare-bar');
+            if (selectedCompareIds.size > 0) {
+                document.getElementById('compare-count-text').innerText = selectedCompareIds.size;
+            } else {
+                bar.classList.add('hidden');
+            }
+            openCompareView();
+        }
+
+        // 체크한 매물들을 나란히 비교할 수 있는 표를 만들어 비교 드로어에 띄운다.
+        function openCompareView() {
+            const items = Array.from(selectedCompareIds).map(id => itemDataById[id]).filter(Boolean);
+            const compareContainer = document.getElementById('compare-container');
+
+            if (items.length === 0) {
+                compareContainer.innerHTML = `<div class="text-center py-10 text-slate-400 text-xs">비교할 매물을 리스트에서 체크해주세요.</div>`;
+                toggleDrawer('drawer-compare', true);
+                return;
+            }
+
+            const rows = [
+                { label: '단지명', render: (it) => `<a href="https://new.land.naver.com/search?sk=${encodeURIComponent(`${it.district} ${it.dong} ${it.name}`)}" target="_blank" class="font-bold text-slate-900 hover:text-blue-600 hover:underline">${it.name}</a>` },
+                { label: '지역', render: (it) => `<span class="font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-xs">${it.district}</span> <span class="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-xs">${it.dong}</span>` },
+                { label: it => (it.dealCategory === 'rent' ? (it.monthlyRent > 0 ? '월세' : '전세') : '실거래가'), render: (it) => `<span class="font-black ${it.isEstimate ? 'text-amber-700' : 'text-rose-600'}">${formatPriceText(it)}</span>${it.isEstimate ? `<div class="text-[10px] text-amber-600 font-semibold">추정(${it.estimateBasisYm})</div>` : ''}` },
+                { label: '평형', render: (it) => `전용 ${it.pyeong}평` },
+                { label: '층', render: (it) => `${it.floor}층` },
+                { label: '건축년도', render: (it) => `${it.buildYear}년` },
+                { label: it => (it.isEstimate ? '해당 실거래일' : '계약일'), render: (it) => it.date },
+            ];
+
+            const headerCells = items.map(it => `
+                <th class="p-2 text-left border-b border-slate-200 min-w-[140px]">
+                    <button onclick="removeFromCompare('${it.id}')" class="text-slate-300 hover:text-rose-500 float-right" title="비교에서 빼기">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </th>
+            `).join('');
+
+            const bodyRows = rows.map((row, rowIdx) => `
+                <tr class="${rowIdx % 2 === 0 ? 'bg-slate-50/60' : ''}">
+                    <td class="p-2 text-xs font-bold text-slate-500 whitespace-nowrap border-b border-slate-100 sticky left-0 bg-white">${typeof row.label === 'function' ? row.label(items[0]) : row.label}</td>
+                    ${items.map(it => `<td class="p-2 text-sm text-slate-800 border-b border-slate-100">${row.render(it)}</td>`).join('')}
+                </tr>
+            `).join('');
+
+            compareContainer.innerHTML = `
+                <div class="overflow-x-auto -m-4 p-4">
+                    <table class="border-collapse w-full">
+                        <thead><tr>${headerCells}</tr></thead>
+                        <tbody>${bodyRows}</tbody>
+                    </table>
+                </div>
+            `;
+
+            toggleDrawer('drawer-compare', true);
+        }
+
         async function fetchMolitRealEstateData() {
             // 새 검색이 시작되면(다른 위치를 클릭하는 등) 이전 결과의 마커/연결선을 데이터가
             // 오기도 전에 즉시 지운다 - 예전엔 새 데이터가 준비될 때까지 옛 마커가 남아있었음.
@@ -1041,6 +1157,8 @@
             facilityLinesList = [];
             infoWindow.close();
             infoWindowPinned = false;
+            itemDataById = {};
+            clearCompareSelection();
 
             let budgetFrom = parseFloat(document.getElementById('budget-from').value);
             let budgetTo = parseFloat(document.getElementById('budget-to').value);
@@ -1076,21 +1194,20 @@
             const container = document.getElementById('result-container');
             container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">국토교통부 실거래가 데이터를 불러오는 중...</div>`;
 
-            // 1) 목표월 실거래 + 추정 시세(과거 실거래 기반)를, 반경이 걸치는 "모든" 지역에 대해
-            //    한꺼번에 병렬로 요청한다. (예전엔 추정 시세를 중심 지역 하나에만 한정해서 계산했더니
-            //    반경을 넓혀도 노란 마커가 중심 근처에만 몰려 보이는 문제가 있었음)
+            // 1) 목표월 "실거래"만 먼저 빠르게 조회한다 (과거 6개월 추정 시세 조회는 아래에서
+            //    별도로, 필요할 때만 하거나 백그라운드로 미룬다 - 이게 초기 대기시간의 대부분이었음)
             let allTrades = [];
-            let allEstimateTrades = [];
-            let primaryEstimateInfo = null; // "결과 0건" 요약 문구용 (중심 지역 기준 평당가)
+            let areasResolved = [];
             try {
                 const areas = await resolveAreasForRadius();
                 if (areas.length === 0) {
                     throw new Error('조회 가능한 지역을 찾지 못했습니다.');
                 }
+                areasResolved = areas;
 
                 const settled = await Promise.allSettled(
                     areas.map(area =>
-                        fetch(`/api/molit/trades-with-estimate?lawdCd=${area.lawdCd}&dealYmd=${dealYmd}&lookback=6&housingType=${housingType}&dealCategory=${dealCategory}`)
+                        fetch(`/api/molit/trades?lawdCd=${area.lawdCd}&dealYmd=${dealYmd}&housingType=${housingType}&dealCategory=${dealCategory}`)
                             .then(async r => {
                                 const data = await r.json();
                                 if (!r.ok) throw new Error(data.detail || data.error || '조회 실패');
@@ -1108,11 +1225,9 @@
                     const { area, data } = result.value;
                     const label = `${area.sido || ''} ${area.sigungu || ''}`.trim();
                     (data.trades || []).forEach(t => allTrades.push({ ...t, district: label }));
-                    (data.estimateTrades || []).forEach(t => allEstimateTrades.push({ ...t, district: label }));
-                    if (idx === 0) primaryEstimateInfo = data; // 중심 지역(항상 areas[0])
                 });
 
-                if (allTrades.length === 0 && allEstimateTrades.length === 0 && areaErrors.length > 0) {
+                if (allTrades.length === 0 && areaErrors.length === areas.length) {
                     throw new Error(areaErrors.join(' / '));
                 }
             } catch (e) {
@@ -1136,13 +1251,30 @@
                 return true;
             };
 
-            // 2) 실거래(모든 지역) + 추정 시세(모든 지역, 실거래 없는 단지만) 를 합쳐서 필터링
-            const rawTrades = [...allTrades, ...allEstimateTrades];
-            let candidates = rawTrades.filter(passesFilter);
+            let candidates = allTrades.filter(passesFilter);
 
-            if (candidates.length === 0) {
-                markersList.forEach(m => m.setMap(null));
-                markersList = [];
+            // 2) 과거 6개월 기반 "추정 시세"는 별도 함수로 분리한다. 실거래가 이미 있으면 이건
+            //    백그라운드에서 조용히 이어붙이고, 실거래가 하나도 없을 때만 여기서 기다린다.
+            let primaryEstimateInfo = null; // "결과 0건" 요약 문구용 (중심 지역 기준 평당가)
+            async function fetchEstimateCandidates() {
+                const settled = await Promise.allSettled(
+                    areasResolved.map(area =>
+                        fetch(`/api/molit/trades-with-estimate?lawdCd=${area.lawdCd}&dealYmd=${dealYmd}&lookback=6&housingType=${housingType}&dealCategory=${dealCategory}`)
+                            .then(r => r.json().then(data => ({ area, data, ok: r.ok })))
+                    )
+                );
+                let list = [];
+                settled.forEach((result, idx) => {
+                    if (result.status !== 'fulfilled' || !result.value.ok) return;
+                    const { area, data } = result.value;
+                    const label = `${area.sido || ''} ${area.sigungu || ''}`.trim();
+                    (data.estimateTrades || []).forEach(t => list.push({ ...t, district: label }));
+                    if (idx === 0) primaryEstimateInfo = data; // 중심 지역(항상 areasResolved[0])
+                });
+                return list.filter(passesFilter);
+            }
+
+            const showEmptyMessage = () => {
                 setResultCount(0);
                 if (primaryEstimateInfo?.areaAvgManwonPerPyeong) {
                     const midPyeong = isFinite(pyeongTo) ? (pyeongFrom + pyeongTo) / 2 : pyeongFrom;
@@ -1156,8 +1288,7 @@
                 } else {
                     container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">${currentSigunguLabel || ''} ${dealYmdInput} 기준, 설정하신 조건에 맞는 실거래가 없습니다.</div>`;
                 }
-                return;
-            }
+            };
 
             // 3) 좌표 변환을 위한 지오코딩 (단지명 기반 주소가 지번보다 매칭률이 높다)
             const addressOf = (t) => `${t.district || currentSigunguLabel || ''} ${t.umdNm} ${t.aptNm}`.trim();
@@ -1166,18 +1297,26 @@
 
             let markerIndex = 0;
             let totalAppended = 0;
+            let lastAppendDelay = 0; // 마지막으로 처리한 배치가 완전히 끝나는 시각(ms) - 결과 드로어 자동오픈 타이밍용
+            let globalCandidateSeq = 0; // 여러 단계(실거래/추정)에 걸쳐 id가 겹치지 않도록 하는 전역 일련번호
 
             // 매물 마커 + 리스트 카드를 화면에 추가한다. 여러 번 나눠 불러도 안전하도록,
             // 이미 만들어둔 구/동 그룹 컨테이너가 있으면 그대로 재사용해서 이어 붙인다.
             // (전체가 다 준비될 때까지 기다리지 않고, 준비되는 대로 바로바로 보여주기 위함)
+            const DROP_INTERVAL_MS = 45; // 청크 내 마커 간 간격 (예전 150ms에서 대폭 단축)
+
             function appendItemsToUI(items) {
-                if (items.length === 0) return;
+                if (items.length === 0) return 0;
                 if (totalAppended === 0) container.innerHTML = ''; // "불러오는 중" 문구를 첫 결과로 교체
                 totalAppended += items.length;
                 setResultCount(totalAppended);
 
+                let localIdx = 0; // 이번 호출(청크)에 한정된 스태거 카운터 - 청크마다 새로 시작해서
+                                   // 뒤에 오는 청크가 앞 청크의 누적 지연을 그대로 이어받지 않게 한다.
+
                 const grouped = {};
                 items.forEach(item => {
+                    itemDataById[item.id] = item;
                     if (!grouped[item.district]) grouped[item.district] = {};
                     if (!grouped[item.district][item.dong]) grouped[item.district][item.dong] = [];
                     grouped[item.district][item.dong].push(item);
@@ -1190,7 +1329,7 @@
                             <div class="bg-slate-50/70 border border-slate-200 rounded-2xl p-3.5 space-y-3 shadow-xs">
                                 <div class="flex items-center space-x-2 border-b border-indigo-200 pb-2">
                                     <i class="fa-solid fa-map-location-dot text-indigo-600 text-sm"></i>
-                                    <span class="font-black text-indigo-700 text-sm bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl shadow-2xs">${district}</span>
+                                    <span class="font-black text-indigo-700 text-base bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl shadow-2xs">${district}</span>
                                 </div>
                                 <div id="district-group-${district}" class="space-y-3"></div>
                             </div>
@@ -1203,7 +1342,7 @@
                         if (!dongContainer) {
                             districtContainer.insertAdjacentHTML('beforeend', `
                                 <div class="space-y-2 pt-1">
-                                    <span class="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md inline-block shadow-2xs">${dong}</span>
+                                    <span class="text-sm font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md inline-block shadow-2xs">${dong}</span>
                                     <div id="dong-group-${district}-${dong}" class="space-y-2.5 pt-1"></div>
                                 </div>
                             `);
@@ -1211,7 +1350,8 @@
                         }
 
                         dongItems.forEach(item => {
-                            const currentIdx = markerIndex++;
+                            markerIndex++;
+                            const currentIdx = localIdx++;
 
                             setTimeout(() => {
                                 const marker = new google.maps.Marker({
@@ -1261,9 +1401,9 @@
                                 });
 
                                 markersList.push(marker);
-                            }, currentIdx * 150);
+                            }, currentIdx * DROP_INTERVAL_MS);
 
-                            const naverLandUrl = `https://new.land.naver.com/search?sk=${encodeURIComponent(item.name)}`;
+                            const naverLandUrl = `https://new.land.naver.com/search?sk=${encodeURIComponent(`${item.district} ${item.dong} ${item.name}`)}`;
                             const priceBoxClass = item.isEstimate
                                 ? 'bg-amber-50 border border-amber-200'
                                 : 'bg-rose-50 border border-rose-200';
@@ -1273,24 +1413,27 @@
 
                             dongContainer.insertAdjacentHTML('beforeend', `
                                 <div id="card-${item.id}" class="bg-white hover:bg-indigo-50/40 border ${item.isEstimate ? 'border-amber-200' : 'border-slate-200'} hover:border-indigo-600 rounded-xl p-3.5 space-y-2.5 transition-all cursor-pointer shadow-2xs" onclick="map.panTo({lat: ${item.lat}, lng: ${item.lng}}); focusCard('card-${item.id}');">
-                                    <div class="flex justify-between items-start">
-                                        <div>
-                                            <h4 class="font-bold text-slate-900 text-sm">
-                                                <a href="${naverLandUrl}" target="_blank" onclick="event.stopPropagation();" class="text-indigo-700 hover:underline inline-flex items-center space-x-1">
-                                                    <span>${item.name}</span>
-                                                    <i class="fa-solid fa-arrow-up-right-from-square text-[10px] ml-1"></i>
-                                                </a>
-                                            </h4>
-                                            ${item.isEstimate ? `<span class="text-[10px] text-amber-600 font-semibold">최근 실거래 없음 · 과거 실거래 기반 추정</span>` : ''}
+                                    <div class="flex justify-between items-start gap-2">
+                                        <div class="flex items-start gap-2 min-w-0">
+                                            <input type="checkbox" class="compare-checkbox mt-1.5 w-4 h-4 accent-indigo-600 flex-shrink-0" data-id="${item.id}" onclick="event.stopPropagation();" onchange="toggleCompareSelect('${item.id}', this.checked)">
+                                            <div class="min-w-0">
+                                                <h4 class="font-bold text-base">
+                                                    <a href="${naverLandUrl}" target="_blank" onclick="event.stopPropagation();" class="text-slate-900 hover:text-blue-600 hover:underline inline-flex items-center space-x-1">
+                                                        <span>${item.name}</span>
+                                                        <i class="fa-solid fa-arrow-up-right-from-square text-[11px] ml-1"></i>
+                                                    </a>
+                                                </h4>
+                                                ${item.isEstimate ? `<span class="text-xs text-amber-600 font-semibold">최근 실거래 없음 · 과거 실거래 기반 추정</span>` : ''}
+                                            </div>
                                         </div>
                                         <!-- 가격 정보 강조 -->
-                                        <div class="${priceBoxClass} px-2.5 py-1 rounded-lg text-right">
-                                            <span class="text-[9px] ${priceTextClass} font-semibold block">${priceLabelText}</span>
-                                            <span class="font-black ${priceTextClass} text-sm tracking-tight">${formatPriceText(item)}</span>
+                                        <div class="${priceBoxClass} px-2.5 py-1 rounded-lg text-right flex-shrink-0">
+                                            <span class="text-[10px] ${priceTextClass} font-semibold block">${priceLabelText}</span>
+                                            <span class="font-black ${priceTextClass} text-base tracking-tight">${formatPriceText(item)}</span>
                                         </div>
                                     </div>
                                     <!-- 상세 내용 폰트 크기 확대 및 가독성 개선 -->
-                                    <div class="text-[13px] text-slate-700 grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 font-medium">
+                                    <div class="text-sm text-slate-700 grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 font-medium">
                                         <div>📍 지역: <span class="font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">${item.district}</span> <span class="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">${item.dong}</span></div>
                                         <div>📐 평형: <strong class="text-slate-900">전용 ${item.pyeong}평 (${item.floor}층)</strong></div>
                                         <div>📅 ${item.isEstimate ? '해당 실거래일' : '계약일'}: <strong class="text-slate-900">${item.date}</strong></div>
@@ -1301,13 +1444,83 @@
                         });
                     }
                 }
+
+                return (localIdx - 1) * DROP_INTERVAL_MS + 400; // 이 호출의 마지막 마커가 다 떨어지는 시각(여유시간 포함)
+            }
+
+            // 후보 목록을 주소 청크 단위로 지오코딩하며, 준비되는 대로 바로 지도/리스트에 반영한다.
+            async function geocodeAndRenderChunked(candidateList) {
+                if (candidateList.length === 0) return;
+                const candidatesWithId = candidateList.map((t) => ({ ...t, _id: globalCandidateSeq++ }));
+                const uniqueAddresses = [...new Set(candidatesWithId.map(addressOf))];
+                const CHUNK_SIZE = 8;
+                const chunks = [];
+                for (let i = 0; i < uniqueAddresses.length; i += CHUNK_SIZE) {
+                    chunks.push(uniqueAddresses.slice(i, i + CHUNK_SIZE));
+                }
+
+                for (const chunk of chunks) {
+                    const chunkSet = new Set(chunk);
+                    let chunkGeocodeMap = {};
+                    try {
+                        const res = await fetch('/api/geocode/batch', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ addresses: chunk }),
+                        });
+                        chunkGeocodeMap = await res.json();
+                    } catch (e) {
+                        console.error('[지오코딩 청크 실패, 계속 진행]', e);
+                        continue; // 이 묶음만 건너뛰고 나머지는 계속 진행
+                    }
+
+                    const chunkItems = candidatesWithId
+                        .filter(t => chunkSet.has(addressOf(t)))
+                        .map((t) => {
+                            const loc = chunkGeocodeMap[addressOf(t)];
+                            if (!loc) return null;
+                            return {
+                                id: `t${t._id}-${t.aptNm}-${t.floor}-${t.dealDay}`.replace(/\s/g, ''),
+                                name: t.aptNm,
+                                district: t.district || currentSigunguLabel || '',
+                                dong: t.umdNm,
+                                pyeong: t.pyeong,
+                                price: t.dealAmountEok,
+                                monthlyRent: t.monthlyRentManwon || 0,
+                                dealCategory: t.dealCategory || 'trade',
+                                lat: loc.lat,
+                                lng: loc.lng,
+                                date: `${t.dealYear}-${String(t.dealMonth).padStart(2, '0')}-${String(t.dealDay).padStart(2, '0')}`,
+                                floor: t.floor,
+                                buildYear: t.buildYear,
+                                dealingGbn: t.dealingGbn,
+                                estateAgentSggNm: t.estateAgentSggNm,
+                                isEstimate: !!t.isEstimate,
+                                estimateBasisYm: t.estimateBasisYm || null,
+                            };
+                        })
+                        .filter(Boolean)
+                        .filter(item => getDistanceFromLatLonInKm(currentLat, currentLng, item.lat, item.lng) <= searchRadius);
+
+                    const delay = appendItemsToUI(chunkItems);
+                    if (delay > 0) lastAppendDelay = delay;
+                }
             }
 
             let nearbyFacilitiesToShow = [];
-            const candidatesWithId = candidates.map((t, idx) => ({ ...t, _id: idx }));
 
             if (needsNearbyCheck) {
-                // 추가조건(역세권 등)은 전체 대상을 한 번에 좁혀야 하므로, 기존처럼 한꺼번에 처리한다.
+                // 추가조건(역세권 등)은 전체 대상(실거래+추정)을 한 번에 좁혀야 하므로,
+                // 이 경로에서는 추정치도 미리 기다려서 합친다 (기존 방식 유지).
+                const estimateCandidates = await fetchEstimateCandidates();
+                candidates = [...candidates, ...estimateCandidates];
+
+                if (candidates.length === 0) {
+                    showEmptyMessage();
+                    return;
+                }
+
+                const candidatesWithId = candidates.map((t) => ({ ...t, _id: globalCandidateSeq++ }));
                 const uniqueAddresses = [...new Set(candidatesWithId.map(addressOf))];
                 let geocodeMap = {};
                 try {
@@ -1383,106 +1596,40 @@
                 }
 
                 if (filtered.length === 0) {
-                    setResultCount(0);
-                    if (primaryEstimateInfo?.areaAvgManwonPerPyeong) {
-                        const midPyeong = isFinite(pyeongTo) ? (pyeongFrom + pyeongTo) / 2 : pyeongFrom;
-                        const estimatedEok = Math.round((primaryEstimateInfo.areaAvgManwonPerPyeong * midPyeong / 10000) * 100) / 100;
-                        container.innerHTML = `<div class="text-center py-8 text-slate-500 text-xs leading-relaxed">
-                            조건에 맞는 개별 매물은 없지만, 최근 ${primaryEstimateInfo.monthsUsed.length}개월간 이 지역 평균 평당가는
-                            <strong class="text-indigo-700">${primaryEstimateInfo.areaAvgManwonPerPyeong.toLocaleString()}만원</strong>입니다.<br>
-                            설정하신 평형(${midPyeong}평 기준)으로 환산하면 대략 <strong class="text-indigo-700">${estimatedEok}억</strong> 수준으로 추정됩니다.
-                            <p class="text-slate-400 mt-1">(실거래 기반 추정치이며 실제 매물 시세와 다를 수 있습니다)</p>
-                        </div>`;
-                    } else {
-                        container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">${currentSigunguLabel || ''} ${dealYmdInput} 기준, 설정하신 조건에 맞는 실거래가 없습니다.</div>`;
-                    }
+                    showEmptyMessage();
                     return;
                 }
 
                 container.innerHTML = '';
-                appendItemsToUI(filtered);
+                lastAppendDelay = appendItemsToUI(filtered);
 
             } else {
-                // 일반 조회(추가조건 없음): 주소를 작은 묶음(청크)으로 나눠 순서대로 조회하면서,
-                // 준비되는 대로 즉시 지도/리스트에 반영한다. 전체가 끝나야 하나라도 보이던
-                // 방식보다 체감 속도가 훨씬 빠르다 (카카오 API 호출 총량은 그대로라 안전함).
-                const uniqueAddresses = [...new Set(candidatesWithId.map(addressOf))];
-                const CHUNK_SIZE = 8;
-                const chunks = [];
-                for (let i = 0; i < uniqueAddresses.length; i += CHUNK_SIZE) {
-                    chunks.push(uniqueAddresses.slice(i, i + CHUNK_SIZE));
+                // 일반 조회(추가조건 없음): 실거래가 있으면 즉시 지오코딩해서 보여주고,
+                // 추정 시세(과거 6개월)는 백그라운드에서 조용히 이어붙인다 - 기다리지 않는다.
+                if (candidates.length === 0) {
+                    // 이번 달 실거래가 하나도 없으면, 추정치라도 있는지 여기서는 기다려서 확인한다.
+                    container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">실거래가 없어 최근 실거래 기반 추정 시세를 확인하는 중...</div>`;
+                    candidates = await fetchEstimateCandidates();
+                } else {
+                    // 실거래가 있으면 추정 시세는 백그라운드에서 조회해 이어붙인다 (블로킹하지 않음).
+                    fetchEstimateCandidates()
+                        .then(estimateCandidates => geocodeAndRenderChunked(estimateCandidates))
+                        .catch(e => console.error('[백그라운드 추정 시세 실패]', e));
                 }
 
-                for (const chunk of chunks) {
-                    const chunkSet = new Set(chunk);
-                    let chunkGeocodeMap = {};
-                    try {
-                        const res = await fetch('/api/geocode/batch', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ addresses: chunk }),
-                        });
-                        chunkGeocodeMap = await res.json();
-                    } catch (e) {
-                        console.error('[지오코딩 청크 실패, 계속 진행]', e);
-                        continue; // 이 묶음만 건너뛰고 나머지는 계속 진행
-                    }
-
-                    const chunkItems = candidatesWithId
-                        .filter(t => chunkSet.has(addressOf(t)))
-                        .map((t) => {
-                            const loc = chunkGeocodeMap[addressOf(t)];
-                            if (!loc) return null;
-                            return {
-                                id: `t${t._id}-${t.aptNm}-${t.floor}-${t.dealDay}`.replace(/\s/g, ''),
-                                name: t.aptNm,
-                                district: t.district || currentSigunguLabel || '',
-                                dong: t.umdNm,
-                                pyeong: t.pyeong,
-                                price: t.dealAmountEok,
-                                monthlyRent: t.monthlyRentManwon || 0,
-                                dealCategory: t.dealCategory || 'trade',
-                                lat: loc.lat,
-                                lng: loc.lng,
-                                date: `${t.dealYear}-${String(t.dealMonth).padStart(2, '0')}-${String(t.dealDay).padStart(2, '0')}`,
-                                floor: t.floor,
-                                buildYear: t.buildYear,
-                                dealingGbn: t.dealingGbn,
-                                estateAgentSggNm: t.estateAgentSggNm,
-                                isEstimate: !!t.isEstimate,
-                                estimateBasisYm: t.estimateBasisYm || null,
-                            };
-                        })
-                        .filter(Boolean)
-                        .filter(item => getDistanceFromLatLonInKm(currentLat, currentLng, item.lat, item.lng) <= searchRadius);
-
-                    appendItemsToUI(chunkItems);
-                }
+                await geocodeAndRenderChunked(candidates);
 
                 if (totalAppended === 0) {
-                    setResultCount(0);
-                    if (primaryEstimateInfo?.areaAvgManwonPerPyeong) {
-                        const midPyeong = isFinite(pyeongTo) ? (pyeongFrom + pyeongTo) / 2 : pyeongFrom;
-                        const estimatedEok = Math.round((primaryEstimateInfo.areaAvgManwonPerPyeong * midPyeong / 10000) * 100) / 100;
-                        container.innerHTML = `<div class="text-center py-8 text-slate-500 text-xs leading-relaxed">
-                            조건에 맞는 개별 매물은 없지만, 최근 ${primaryEstimateInfo.monthsUsed.length}개월간 이 지역 평균 평당가는
-                            <strong class="text-indigo-700">${primaryEstimateInfo.areaAvgManwonPerPyeong.toLocaleString()}만원</strong>입니다.<br>
-                            설정하신 평형(${midPyeong}평 기준)으로 환산하면 대략 <strong class="text-indigo-700">${estimatedEok}억</strong> 수준으로 추정됩니다.
-                            <p class="text-slate-400 mt-1">(실거래 기반 추정치이며 실제 매물 시세와 다를 수 있습니다)</p>
-                        </div>`;
-                    } else {
-                        container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">${currentSigunguLabel || ''} ${dealYmdInput} 기준, 설정하신 조건에 맞는 실거래가 없습니다.</div>`;
-                    }
+                    showEmptyMessage();
                     return;
                 }
             }
 
             // 지도에 마커가 "모두" 찍히고 난 뒤에만 결과 드로어를 자동으로 연다.
-            // (이 시점엔 markerIndex가 전체 마커 개수로 확정되어 있으므로, 마지막 마커의
-            // 드롭 애니메이션이 끝나는 시각을 정확히 계산해 그때 열 수 있다.)
-            if (markerIndex > 0) {
-                const lastMarkerDelay = (markerIndex - 1) * 150 + 400; // 드롭 애니메이션 여유시간 포함
-                setTimeout(() => toggleDrawer('drawer-results', true), lastMarkerDelay);
+            // (청크마다 스태거가 새로 시작되므로, 마지막으로 호출된 appendItemsToUI가
+            // 알려주는 "그 청크의 마지막 마커가 떨어지는 시각"을 그대로 쓰면 정확하다.)
+            if (lastAppendDelay > 0) {
+                setTimeout(() => toggleDrawer('drawer-results', true), lastAppendDelay);
             }
 
             // 5) 추가조건(역세권/마트·백화점/공원/학교)으로 찾은 실제 시설을, 아파트 마커와
@@ -1521,8 +1668,7 @@
                         title: f.name,
                     });
 
-                    marker.addListener('mouseover', () => {
-                        infoWindowPinned = false;
+                    const showFacilityInfo = () => {
                         infoWindow.setContent(`
                             <div style="padding:0px; font-family:'Apple SD Gothic Neo',sans-serif;">
                                 <div style="font-weight:700; font-size:13px; color:#0f172a; margin-bottom:2px;">${f.name}</div>
@@ -1530,6 +1676,14 @@
                             </div>
                         `);
                         infoWindow.open(map, marker);
+                    };
+                    marker.addListener('mouseover', () => {
+                        infoWindowPinned = false;
+                        showFacilityInfo();
+                    });
+                    marker.addListener('click', () => {
+                        infoWindowPinned = true;
+                        showFacilityInfo();
                     });
                     marker.addListener('mouseout', () => {
                         if (!infoWindowPinned) infoWindow.close();
