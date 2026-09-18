@@ -106,17 +106,19 @@
             const errEl = document.getElementById('permission-error');
             errEl.innerText = '';
             try {
-                // 1) 카메라
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-                document.getElementById('camera-video').srcObject = stream;
-
-                // 2) 방향 센서 (iOS는 반드시 사용자 클릭 안에서 권한 요청을 해야 함)
+                // 1) 방향 센서 권한을 가장 먼저 요청한다. iOS는 "버튼 클릭 직후, 다른 비동기
+                //    작업 없이" 바로 이어지는 요청만 허용한다 - 카메라 권한 등을 먼저 기다리면
+                //    그 사이에 클릭 컨텍스트가 끊겨서 방향센서 권한 요청이 거부된다.
                 if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                     const perm = await DeviceOrientationEvent.requestPermission();
                     if (perm !== 'granted') throw new Error('방향 센서 권한이 거부되었습니다.');
                 }
                 window.addEventListener('deviceorientationabsolute', handleOrientation, true);
                 window.addEventListener('deviceorientation', handleOrientation, true);
+
+                // 2) 카메라
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+                document.getElementById('camera-video').srcObject = stream;
 
                 // 3) 위치
                 if (!navigator.geolocation) throw new Error('이 기기는 위치 서비스를 지원하지 않습니다.');
