@@ -66,6 +66,24 @@ app.get('/api/config', (req, res) => {
 //    카카오 로컬 API의 coord2regioncode로 법정동 정보를 직접 받는다.
 //    응답의 10자리 법정동코드 앞 5자리가 국토부 API가 쓰는 시군구코드(LAWD_CD)와 동일하다.
 // -----------------------------------------------------------------------
+async function reverseGeocode(lat, lng) {
+  const { data } = await axios.get('https://dapi.kakao.com/v2/local/geo/coord2regioncode.json', {
+    params: { x: lng, y: lat }, // 카카오는 x=경도, y=위도 순서
+    headers: kakaoHeaders,
+  });
+  // region_type "B"가 법정동(국토부 API 기준), "H"는 행정동이라 용도가 다르다.
+  const region = data.documents?.find(d => d.region_type === 'B');
+  if (!region) return null;
+  const lawdCd = region.code ? region.code.slice(0, 5) : null;
+  return {
+    formattedAddress: region.address_name,
+    sido: region.region_1depth_name || null,
+    sigungu: region.region_2depth_name || null,
+    lawdCd,
+    supported: !!lawdCd,
+  };
+}
+
 app.get('/api/geocode/reverse', async (req, res) => {
   const { lat, lng } = req.query;
   if (!lat || !lng) {
@@ -76,26 +94,11 @@ app.get('/api/geocode/reverse', async (req, res) => {
   }
 
   try {
-    const { data } = await axios.get('https://dapi.kakao.com/v2/local/geo/coord2regioncode.json', {
-      params: { x: lng, y: lat }, // 카카오는 x=경도, y=위도 순서
-      headers: kakaoHeaders,
-    });
-
-    // region_type "B"가 법정동(국토부 API 기준), "H"는 행정동이라 용도가 다르다.
-    const region = data.documents?.find(d => d.region_type === 'B');
-    if (!region) {
+    const result = await reverseGeocode(lat, lng);
+    if (!result) {
       return res.status(404).json({ error: '해당 좌표의 법정동 정보를 찾지 못했습니다 (바다 등일 수 있습니다).' });
     }
-
-    const lawdCd = region.code ? region.code.slice(0, 5) : null;
-
-    res.json({
-      formattedAddress: region.address_name,
-      sido: region.region_1depth_name || null,
-      sigungu: region.region_2depth_name || null,
-      lawdCd,
-      supported: !!lawdCd,
-    });
+    res.json(result);
   } catch (err) {
     const status = err.response?.status;
     const message = err.response?.data?.message || err.message;
@@ -534,6 +537,116 @@ app.post('/api/molit/area-analysis', async (req, res) => {
     floorSummary,
     pyeongSummary,
   });
+});
+
+// -----------------------------------------------------------------------
+// 4.8) AR 오버레이용 - 현재 좌표 주변의 실거래 단지를 좌표와 함께 반환한다.
+//    (역지오코딩 -> 이번달 실거래 조회 -> 단지별 집계 -> 좌표 변환 -> 거리 필터
+//    를 한 번의 호출로 처리해서 클라이언트를 단순하게 유지한다)
+// -----------------------------------------------------------------------
+app.get('/api/molit/nearby-complexes', async (req, res) => {
+  const lat = parseFloat(req.query.lat);
+  const lng = parseFloat(req.query.lng);
+  const housingType = req.query.housingType || 'apt';
+  const dealCategory = req.query.dealCategory || 'trade';
+  const radiusKm = Math.min(parseFloat(req.query.radiusKm) || 1.5, 5);
+
+  if (isNaN(lat) || isNaN(lng)) {
+    return res.status(400).json({ error: 'lat, lng 파라미터가 필요합니다.' });
+  }
+  if (!MOLIT_API_KEY || !KAKAO_REST_API_KEY) {
+    return res.status(500).json({ error: '서버에 필요한 API 키가 설정되지 않았습니다.' });
+  }
+
+  // 1) 역지오코딩으로 현재 위치의 시군구코드 확인
+  let region;
+  try {
+    region = await reverseGeocode(lat, lng);
+  } catch (err) {
+    return res.status(502).json({ error: '위치 확인(지오코딩) 실패', detail: err.message });
+  }
+  if (!region || !region.supported) {
+    return res.status(404).json({ error: '이 위치의 시군구코드를 확인하지 못했습니다.' });
+  }
+
+  // 2) 이번달 실거래 조회, 없으면 최근 3개월까지 거슬러 올라가며 시도 (실거래는 며칠 걸러
+  //    나오는 경우가 많아 이번달에 아무 데이터도 없을 수 있다)
+  const now = new Date();
+  let trades = [];
+  let usedYmd = null;
+  for (let back = 0; back < 3 && trades.length === 0; back++) {
+    const ymd = shiftYm(`${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`, back);
+    try {
+      trades = await fetchMolitTradesRetried(region.lawdCd, ymd, housingType, dealCategory);
+      if (trades.length > 0) usedYmd = ymd;
+    } catch (err) {
+      console.error('[nearby-complexes] 실거래 조회 실패', ymd, err.message);
+    }
+  }
+  if (trades.length === 0) {
+    return res.json({ region, usedYmd: null, complexes: [] });
+  }
+
+  // 3) 단지(주소)별로 묶어서 최근 거래가/거래건수 집계
+  const byAddress = new Map();
+  trades.forEach(t => {
+    const address = `${region.sido} ${region.sigungu} ${t.umdNm} ${t.aptNm}`.trim();
+    if (!byAddress.has(address)) {
+      byAddress.set(address, { name: t.aptNm, dong: t.umdNm, deals: [] });
+    }
+    byAddress.get(address).deals.push(t);
+  });
+
+  // 4) 단지 주소들을 좌표로 변환 (기존 배치 지오코딩 재사용, 캐시 적용됨)
+  const addresses = [...byAddress.keys()];
+  const CONCURRENCY = 6;
+  const geocodeMap = {};
+  for (let i = 0; i < addresses.length; i += CONCURRENCY) {
+    const batch = addresses.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(batch.map(geocodeOne));
+    batch.forEach((addr, idx) => { geocodeMap[addr] = results[idx]; });
+    if (i + CONCURRENCY < addresses.length) await sleep(100);
+  }
+
+  // 5) 좌표가 확보된 단지만, 현재 위치로부터의 거리를 계산해 반경 내로 필터링
+  const toRad = (deg) => deg * Math.PI / 180;
+  const haversineKm = (lat1, lng1, lat2, lng2) => {
+    const R = 6371;
+    const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  };
+
+  const complexes = [];
+  for (const [address, info] of byAddress.entries()) {
+    const loc = geocodeMap[address];
+    if (!loc) continue;
+    const distanceKm = haversineKm(lat, lng, loc.lat, loc.lng);
+    if (distanceKm > radiusKm) continue;
+
+    const prices = info.deals.map(d => d.dealAmountEok).filter(p => p > 0);
+    const latest = info.deals.slice().sort((a, b) => `${b.dealYear}${String(b.dealMonth).padStart(2,'0')}${String(b.dealDay).padStart(2,'0')}`.localeCompare(`${a.dealYear}${String(a.dealMonth).padStart(2,'0')}${String(a.dealDay).padStart(2,'0')}`))[0];
+
+    complexes.push({
+      name: info.name,
+      dong: info.dong,
+      lat: loc.lat,
+      lng: loc.lng,
+      distanceKm: Math.round(distanceKm * 100) / 100,
+      dealCount: info.deals.length,
+      avgPriceEok: prices.length ? Math.round((prices.reduce((a, b) => a + b, 0) / prices.length) * 100) / 100 : null,
+      latestPriceEok: latest ? latest.dealAmountEok : null,
+      latestPyeong: latest ? latest.pyeong : null,
+      latestFloor: latest ? latest.floor : null,
+      latestDate: latest ? `${latest.dealYear}-${String(latest.dealMonth).padStart(2, '0')}-${String(latest.dealDay).padStart(2, '0')}` : null,
+      isJeonse: latest ? !!latest.isJeonse : undefined,
+      monthlyRentManwon: latest ? (latest.monthlyRentManwon || 0) : 0,
+    });
+  }
+
+  complexes.sort((a, b) => a.distanceKm - b.distanceKm);
+
+  res.json({ region, usedYmd, complexes });
 });
 
 app.get('/api/molit/trades', async (req, res) => {

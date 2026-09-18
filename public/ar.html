@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AR 실거래가 - 내 집 한방 뽑기</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        html, body { height: 100%; margin: 0; overflow: hidden; font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; background: #000; }
+        #camera-video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+        #ar-overlay { position: fixed; inset: 0; pointer-events: none; }
+        .ar-pin { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; transition: left 0.15s linear, top 0.15s linear; }
+    </style>
+</head>
+<body>
+
+    <!-- 카메라 화면 -->
+    <video id="camera-video" autoplay playsinline muted></video>
+    <div id="ar-overlay"></div>
+
+    <!-- 상단 바 -->
+    <div class="fixed top-0 left-0 right-0 z-20 bg-gradient-to-b from-black/70 to-transparent p-3 flex justify-between items-center">
+        <a href="/" class="w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center"><i class="fa-solid fa-arrow-left"></i></a>
+        <div class="text-white text-xs font-bold bg-black/40 px-3 py-1.5 rounded-full" id="status-text">준비 중...</div>
+        <button onclick="refreshComplexes()" class="w-9 h-9 rounded-full bg-black/40 text-white flex items-center justify-center"><i class="fa-solid fa-rotate"></i></button>
+    </div>
+
+    <!-- 시작 전 권한 요청 화면 -->
+    <div id="permission-screen" class="fixed inset-0 z-30 bg-slate-900 text-white flex flex-col items-center justify-center p-6 text-center space-y-4">
+        <i class="fa-solid fa-camera text-5xl text-indigo-400"></i>
+        <h1 class="text-xl font-black">AR 실거래가 뷰</h1>
+        <p class="text-sm text-slate-300 leading-relaxed max-w-xs">
+            카메라·위치·방향 센서 권한이 필요합니다.<br>
+            주변에 실거래된 단지가 있으면 화면에 라벨로 표시됩니다.
+        </p>
+        <p class="text-[11px] text-amber-400 leading-relaxed max-w-xs bg-amber-950/40 border border-amber-800 rounded-lg p-3">
+            ⚠️ GPS와 휴대폰 나침반은 도심에서 오차가 클 수 있어(수십 m, ±10~20°), 라벨이 실제 건물과 정확히 일치하지 않을 수 있습니다. 참고용으로만 사용해주세요.
+        </p>
+        <button onclick="startAR()" class="w-full max-w-xs py-3.5 bg-indigo-600 hover:bg-indigo-700 rounded-xl font-bold">권한 허용하고 시작하기</button>
+        <div id="permission-error" class="text-xs text-rose-400"></div>
+    </div>
+
+    <!-- 조회 조건 (하단) -->
+    <div class="fixed bottom-0 left-0 right-0 z-20 bg-gradient-to-t from-black/80 to-transparent p-3 pt-8">
+        <div class="flex gap-2 mb-2">
+            <select id="select-deal" onchange="refreshComplexes()" class="flex-1 px-2 py-2 text-xs font-bold bg-white/90 rounded-lg">
+                <option value="매매" selected>매매</option>
+                <option value="전세">전세</option>
+                <option value="월세">월세</option>
+            </select>
+            <select id="select-housing" onchange="refreshComplexes()" class="flex-1 px-2 py-2 text-xs font-bold bg-white/90 rounded-lg">
+                <option value="아파트" selected>아파트</option>
+                <option value="빌라">연립다세대</option>
+                <option value="오피스텔">오피스텔</option>
+            </select>
+        </div>
+        <div class="text-center text-white text-[11px] bg-black/40 rounded-full py-1.5 px-3" id="found-count-text">주변 단지 확인 중...</div>
+    </div>
+
+    <!-- 상세 정보 팝업 -->
+    <div id="detail-popup" class="hidden fixed inset-x-4 bottom-28 z-40 bg-white rounded-2xl p-4 shadow-2xl">
+        <div class="flex justify-between items-start">
+            <div>
+                <div id="detail-name" class="font-black text-slate-900"></div>
+                <div id="detail-dong" class="text-xs text-slate-400"></div>
+            </div>
+            <button onclick="document.getElementById('detail-popup').classList.add('hidden')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="grid grid-cols-2 gap-2 mt-3 text-xs">
+            <div class="bg-rose-50 rounded-lg p-2">
+                <div class="text-rose-400 font-semibold text-[10px]">최근 거래가</div>
+                <div id="detail-price" class="font-black text-rose-600 text-base"></div>
+            </div>
+            <div class="bg-slate-50 rounded-lg p-2">
+                <div class="text-slate-400 font-semibold text-[10px]">직선거리</div>
+                <div id="detail-distance" class="font-black text-slate-700 text-base"></div>
+            </div>
+        </div>
+        <div id="detail-extra" class="text-xs text-slate-500 mt-2 leading-relaxed"></div>
+    </div>
+
+    <script>
+        let currentLat = null, currentLng = null, currentHeading = null;
+        let complexes = [];
+        const FOV_DEG = 65; // 후면 카메라의 대략적인 수평 화각(기기마다 다름 - 근사치)
+        const MAX_DIST_KM = 1.5;
+
+        function toRad(d) { return d * Math.PI / 180; }
+        function toDeg(r) { return r * 180 / Math.PI; }
+
+        function calcBearing(lat1, lng1, lat2, lng2) {
+            const y = Math.sin(toRad(lng2 - lng1)) * Math.cos(toRad(lat2));
+            const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lng2 - lng1));
+            return (toDeg(Math.atan2(y, x)) + 360) % 360;
+        }
+
+        function normalizeAngleDiff(diff) {
+            let d = diff % 360;
+            if (d > 180) d -= 360;
+            if (d < -180) d += 360;
+            return d;
+        }
+
+        async function startAR() {
+            const errEl = document.getElementById('permission-error');
+            errEl.innerText = '';
+            try {
+                // 1) 카메라
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+                document.getElementById('camera-video').srcObject = stream;
+
+                // 2) 방향 센서 (iOS는 반드시 사용자 클릭 안에서 권한 요청을 해야 함)
+                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    const perm = await DeviceOrientationEvent.requestPermission();
+                    if (perm !== 'granted') throw new Error('방향 센서 권한이 거부되었습니다.');
+                }
+                window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+                window.addEventListener('deviceorientation', handleOrientation, true);
+
+                // 3) 위치
+                if (!navigator.geolocation) throw new Error('이 기기는 위치 서비스를 지원하지 않습니다.');
+                navigator.geolocation.watchPosition(handlePosition, (err) => {
+                    document.getElementById('status-text').innerText = '위치 확인 실패: ' + err.message;
+                }, { enableHighAccuracy: true, maximumAge: 3000 });
+
+                document.getElementById('permission-screen').classList.add('hidden');
+                document.getElementById('status-text').innerText = '위치 확인 중...';
+            } catch (e) {
+                errEl.innerText = '권한 허용에 실패했습니다: ' + e.message;
+            }
+        }
+
+        function handleOrientation(event) {
+            let heading;
+            if (event.webkitCompassHeading !== undefined) {
+                heading = event.webkitCompassHeading; // iOS: 이미 0=북, 시계방향
+            } else if (event.alpha !== null && event.alpha !== undefined) {
+                heading = 360 - event.alpha; // Android 근사치
+            } else {
+                return;
+            }
+            currentHeading = (heading + 360) % 360;
+            renderOverlay();
+        }
+
+        let lastFetchedAt = 0;
+        function handlePosition(pos) {
+            currentLat = pos.coords.latitude;
+            currentLng = pos.coords.longitude;
+            document.getElementById('status-text').innerText = `정확도 ±${Math.round(pos.coords.accuracy)}m`;
+
+            // 이동량이 크거나 아직 한 번도 조회 안 했으면 다시 조회 (너무 자주 호출하지 않게 20초 간격 제한)
+            const now = Date.now();
+            if (now - lastFetchedAt > 20000) {
+                lastFetchedAt = now;
+                refreshComplexes();
+            } else {
+                renderOverlay();
+            }
+        }
+
+        async function refreshComplexes() {
+            if (currentLat === null) return;
+            document.getElementById('found-count-text').innerText = '주변 실거래 단지 조회 중...';
+
+            const dealValue = document.getElementById('select-deal').value;
+            const housingValue = document.getElementById('select-housing').value;
+            const housingType = housingValue === '오피스텔' ? 'offi' : (housingValue === '빌라' ? 'villa' : 'apt');
+            const dealCategory = dealValue === '매매' ? 'trade' : 'rent';
+
+            try {
+                const res = await fetch(`/api/molit/nearby-complexes?lat=${currentLat}&lng=${currentLng}&housingType=${housingType}&dealCategory=${dealCategory}&radiusKm=${MAX_DIST_KM}`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || data.error || '조회 실패');
+
+                complexes = (data.complexes || []).map(c => ({
+                    ...c,
+                    bearing: calcBearing(currentLat, currentLng, c.lat, c.lng),
+                }));
+
+                if (dealCategory === 'rent') {
+                    complexes = complexes.filter(c => dealValue === '전세' ? c.isJeonse : !c.isJeonse);
+                }
+
+                document.getElementById('found-count-text').innerText = complexes.length > 0
+                    ? `주변 ${MAX_DIST_KM}km 이내 실거래 단지 ${complexes.length}곳 (${data.usedYmd ? data.usedYmd.slice(0,4)+'.'+data.usedYmd.slice(4,6) : ''} 기준)`
+                    : '주변에서 최근 실거래 내역을 찾지 못했습니다.';
+
+                renderOverlay();
+            } catch (e) {
+                document.getElementById('found-count-text').innerText = '조회 실패: ' + e.message;
+            }
+        }
+
+        function priceLabel(c) {
+            if (c.monthlyRentManwon > 0) return `${c.latestPriceEok}억/${c.monthlyRentManwon}만`;
+            return `${c.latestPriceEok}억`;
+        }
+
+        function renderOverlay() {
+            const overlay = document.getElementById('ar-overlay');
+            if (currentHeading === null || currentLat === null || complexes.length === 0) {
+                overlay.innerHTML = '';
+                return;
+            }
+
+            const visible = complexes.filter(c => Math.abs(normalizeAngleDiff(c.bearing - currentHeading)) <= FOV_DEG / 2 && c.distanceKm <= MAX_DIST_KM);
+
+            overlay.innerHTML = visible.map(c => {
+                const diff = normalizeAngleDiff(c.bearing - currentHeading);
+                const leftPercent = 50 + (diff / (FOV_DEG / 2)) * 50;
+                const t = Math.min(c.distanceKm / MAX_DIST_KM, 1); // 0=가까움, 1=멀음
+                const bottomPercent = 18 + t * 45;
+                const scale = 1.25 - t * 0.6;
+
+                return `
+                    <div class="ar-pin" style="left:${leftPercent}%; bottom:${bottomPercent}%; transform: translate(-50%, 50%) scale(${scale});" onclick="showDetail(${complexes.indexOf(c)})">
+                        <div class="bg-white/95 rounded-xl px-3 py-2 shadow-lg border-2 border-rose-400 text-center min-w-[90px]">
+                            <div class="text-[11px] font-black text-slate-900 truncate max-w-[110px]">${c.name}</div>
+                            <div class="text-sm font-black text-rose-600">${priceLabel(c)}</div>
+                            <div class="text-[9px] text-slate-400">${c.distanceKm}km</div>
+                        </div>
+                        <div class="w-2 h-2 bg-rose-400 rounded-full mx-auto -mt-0.5"></div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function showDetail(idx) {
+            const c = complexes[idx];
+            if (!c) return;
+            document.getElementById('detail-name').innerText = c.name;
+            document.getElementById('detail-dong').innerText = c.dong;
+            document.getElementById('detail-price').innerText = priceLabel(c);
+            document.getElementById('detail-distance').innerText = `${c.distanceKm}km`;
+            document.getElementById('detail-extra').innerHTML = `
+                전용 ${c.latestPyeong}평 · ${c.latestFloor}층 · ${c.latestDate}<br>
+                최근 ${c.dealCount}건 거래, 평균 ${c.avgPriceEok}억
+            `;
+            document.getElementById('detail-popup').classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
