@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>지역 비교분석 - 내 집 한방 뽑기</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        body { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; }
+        #map { height: 420px; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <!-- 헤더 -->
+    <header class="bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md">
+        <div class="px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-chart-column text-lg"></i>
+                <div class="leading-tight">
+                    <h1 class="text-base font-bold tracking-tight">지역 비교분석</h1>
+                    <p class="text-[9px] text-white/80">국토부 실거래가 기반 · 구를 클릭해서 선택하세요</p>
+                </div>
+            </div>
+            <a href="/" class="text-xs bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg transition flex items-center space-x-1.5">
+                <i class="fa-solid fa-arrow-left"></i><span>매물 검색으로</span>
+            </a>
+        </div>
+    </header>
+
+    <div class="max-w-2xl mx-auto p-4 space-y-4">
+
+        <!-- 지역 선택 (현위치 기반 자동 감지 + 직접 변경) -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-4">
+            <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 flex-1 min-w-0">
+                    <i class="fa-solid fa-map-location-dot text-indigo-600"></i>
+                    <select id="select-region" onchange="onRegionChange()" class="flex-1 min-w-0 px-2 py-2 text-sm font-bold bg-white border border-slate-300 rounded-lg"></select>
+                </div>
+                <span id="geo-detect-status" class="text-[10px] text-slate-400 flex-shrink-0"></span>
+            </div>
+            <p id="region-note" class="text-[11px] text-amber-600 mt-1.5 hidden"></p>
+        </div>
+
+        <!-- 조회 조건 -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-4 grid grid-cols-3 gap-2">
+            <div>
+                <label class="block text-[10px] font-semibold text-slate-500 mb-1">거래유형</label>
+                <select id="select-deal" class="w-full px-2 py-2 text-xs bg-white border border-slate-300 rounded-lg font-medium">
+                    <option value="매매" selected>매매</option>
+                    <option value="전세">전세</option>
+                    <option value="월세">월세</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-[10px] font-semibold text-slate-500 mb-1">주택유형</label>
+                <select id="select-housing" class="w-full px-2 py-2 text-xs bg-white border border-slate-300 rounded-lg font-medium">
+                    <option value="아파트" selected>아파트</option>
+                    <option value="빌라">연립다세대</option>
+                    <option value="오피스텔">오피스텔</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-[10px] font-semibold text-slate-500 mb-1">계약년월</label>
+                <input type="month" id="input-deal-ymd" class="w-full px-2 py-2 text-xs bg-white border border-slate-300 rounded-lg font-medium">
+            </div>
+        </div>
+
+        <!-- 지도: 구를 클릭해서 선택 -->
+        <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm relative">
+            <div id="map"></div>
+            <div class="absolute top-2 left-2 bg-white/95 px-2.5 py-1.5 rounded-lg text-[10px] text-slate-500 shadow-sm">
+                <i class="fa-solid fa-hand-pointer text-indigo-500 mr-1"></i>구를 클릭하면 선택/해제됩니다 (최대 3개)
+            </div>
+        </div>
+
+        <!-- 선택된 구 + 인접구 추천 -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+            <div>
+                <div class="text-xs font-bold text-slate-700 mb-1.5">선택한 지역</div>
+                <div id="selected-districts" class="flex flex-wrap gap-1.5">
+                    <span class="text-xs text-slate-400">지도에서 구를 클릭해주세요</span>
+                </div>
+            </div>
+            <div id="suggested-wrap" class="hidden">
+                <div class="text-xs font-bold text-slate-700 mb-1.5">📍 인접 지역 추천 (한 번에 추가)</div>
+                <div id="suggested-districts" class="flex flex-wrap gap-1.5"></div>
+            </div>
+            <button id="run-analysis-btn" onclick="runAnalysis()" disabled class="w-full py-3 bg-slate-200 text-slate-400 font-bold text-sm rounded-xl transition">
+                지역을 2개 이상 선택하면 분석할 수 있어요
+            </button>
+        </div>
+
+        <!-- 결과 -->
+        <div id="analysis-result" class="space-y-4">
+            <div class="text-center py-10 text-slate-400 text-xs">지역을 선택하고 분석을 실행해보세요.</div>
+        </div>
+    </div>
+
+    <script>
+        const DISTRICT_COLORS = ['#4f46e5', '#f97316', '#10b981'];
+
+        // 지역 레지스트리 - 하나씩 넓혀갈 때 여기에 항목만 추가하면 된다.
+        // (경계 데이터는 반드시 이름 매칭으로 실제 법정동코드를 검증해서 만들어야 함 -
+        //  통계청 자체 코드와 혼동하기 쉬우니 주의)
+        const REGION_REGISTRY = {
+            '서울특별시': { file: '/data/seoul-gu-boundaries.json', center: { lat: 37.5665, lng: 126.9780 }, zoom: 10.5 },
+            // '경기도': { file: '/data/gyeonggi-si-boundaries.json', center: {...}, zoom: ... }, // 추후 추가 예정
+        };
+
+        let map;
+        let currentRegion = null;
+        let districtDataByLawd = {}; // lawdCd -> {name, sido, centerLat, centerLng}
+        let selectedLawdCds = []; // 선택 순서 유지
+        let hoveredFeatureId = null;
+        let analysisCharts = [];
+
+        function populateRegionSelect() {
+            const select = document.getElementById('select-region');
+            select.innerHTML = Object.keys(REGION_REGISTRY).map(name => `<option value="${name}">${name}</option>`).join('');
+        }
+
+        // 브라우저 위치 권한으로 현재 위치를 확인해서, 지원하는 지역이면 그걸로 자동 선택한다.
+        // 지원하지 않는 지역이면 기본값(서울)을 유지하고 안내만 표시한다.
+        function detectCurrentRegion() {
+            const statusEl = document.getElementById('geo-detect-status');
+            if (!navigator.geolocation) return;
+            statusEl.innerText = '현위치 확인 중...';
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                try {
+                    const res = await fetch(`/api/geocode/reverse?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`);
+                    const data = await res.json();
+                    if (data.sido && REGION_REGISTRY[data.sido]) {
+                        statusEl.innerText = `현위치: ${data.sido}`;
+                        document.getElementById('select-region').value = data.sido;
+                        loadRegion(data.sido);
+                    } else if (data.sido) {
+                        statusEl.innerText = `현위치: ${data.sido} (미지원)`;
+                        showRegionNote(`현재 위치(${data.sido})는 아직 지원하지 않아 서울특별시를 기본으로 보여드립니다.`);
+                    } else {
+                        statusEl.innerText = '';
+                    }
+                } catch (e) {
+                    statusEl.innerText = '';
+                }
+            }, () => { statusEl.innerText = ''; }, { timeout: 5000 });
+        }
+
+        function showRegionNote(text) {
+            const note = document.getElementById('region-note');
+            note.innerText = text;
+            note.classList.remove('hidden');
+        }
+
+        function onRegionChange() {
+            const name = document.getElementById('select-region').value;
+            document.getElementById('region-note').classList.add('hidden');
+            loadRegion(name);
+        }
+
+        function loadRegion(name) {
+            const region = REGION_REGISTRY[name];
+            if (!region) return;
+            currentRegion = name;
+
+            // 이전 지역의 경계/선택 상태를 완전히 초기화
+            map.data.forEach(f => map.data.remove(f));
+            districtDataByLawd = {};
+            selectedLawdCds = [];
+            renderSelection();
+            document.getElementById('analysis-result').innerHTML = `<div class="text-center py-10 text-slate-400 text-xs">지역을 선택하고 분석을 실행해보세요.</div>`;
+
+            map.setCenter(region.center);
+            map.setZoom(region.zoom);
+            map.data.loadGeoJson(region.file, null, () => {
+                map.data.forEach(feature => {
+                    const lawdCd = feature.getProperty('lawdCd');
+                    districtDataByLawd[lawdCd] = {
+                        name: feature.getProperty('name'),
+                        sido: feature.getProperty('sido'),
+                        centerLat: feature.getProperty('centerLat'),
+                        centerLng: feature.getProperty('centerLng'),
+                    };
+                });
+            });
+        }
+
+        function initDefaultDealYmd() {
+            const d = new Date();
+            d.setMonth(d.getMonth() - 1);
+            document.getElementById('input-deal-ymd').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        }
+
+        async function loadGoogleMaps() {
+            const res = await fetch('/api/config');
+            const cfg = await res.json();
+            const script = document.createElement('script');
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${cfg.googleMapsApiKey}&libraries=geometry&callback=initMap`;
+            script.async = true;
+            document.head.appendChild(script);
+        }
+
+        function districtStyle(feature) {
+            const lawdCd = feature.getProperty('lawdCd');
+            const idx = selectedLawdCds.indexOf(lawdCd);
+            const isHovered = feature.getId() === hoveredFeatureId;
+            if (idx !== -1) {
+                return {
+                    fillColor: DISTRICT_COLORS[idx],
+                    fillOpacity: 0.55,
+                    strokeColor: DISTRICT_COLORS[idx],
+                    strokeWeight: 3,
+                    zIndex: 10,
+                };
+            }
+            // 호버 시 살짝 떠 보이는 느낌(밝은 채움 + 굵은 테두리 + 그림자 느낌의 채도 상승)으로
+            // "3D처럼" 강조한다. 실제 지도를 입체로 띄우는 건 아니고, 시각적 강조 효과다.
+            return {
+                fillColor: isHovered ? '#6366f1' : '#94a3b8',
+                fillOpacity: isHovered ? 0.45 : 0.12,
+                strokeColor: isHovered ? '#4f46e5' : '#64748b',
+                strokeWeight: isHovered ? 2.5 : 1,
+                zIndex: isHovered ? 5 : 1,
+            };
+        }
+
+        function initMap() {
+            populateRegionSelect();
+
+            const initialRegion = REGION_REGISTRY['서울특별시'];
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: initialRegion.center,
+                zoom: initialRegion.zoom,
+                disableDefaultUI: true,
+                zoomControl: true,
+            });
+
+            map.data.setStyle(districtStyle);
+
+            map.data.addListener('mouseover', (e) => {
+                hoveredFeatureId = e.feature.getId();
+                map.data.setStyle(districtStyle);
+            });
+            map.data.addListener('mouseout', () => {
+                hoveredFeatureId = null;
+                map.data.setStyle(districtStyle);
+            });
+            map.data.addListener('click', (e) => {
+                const lawdCd = e.feature.getProperty('lawdCd');
+                toggleDistrict(lawdCd);
+            });
+
+            loadRegion('서울특별시');
+            detectCurrentRegion(); // 지원하는 지역에 있으면 자동으로 그 지역으로 바꿔준다
+            initDefaultDealYmd();
+        }
+
+        function toggleDistrict(lawdCd) {
+            const idx = selectedLawdCds.indexOf(lawdCd);
+            if (idx !== -1) {
+                selectedLawdCds.splice(idx, 1);
+            } else {
+                if (selectedLawdCds.length >= 3) {
+                    alert('지역은 최대 3개까지 선택할 수 있습니다.');
+                    return;
+                }
+                selectedLawdCds.push(lawdCd);
+            }
+            map.data.setStyle(districtStyle);
+            renderSelection();
+        }
+
+        // 위경도 두 점 사이 거리(km) - 하버사인
+        function distanceKm(lat1, lng1, lat2, lng2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLng = (lng2 - lng1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function renderSelection() {
+            const wrap = document.getElementById('selected-districts');
+            if (selectedLawdCds.length === 0) {
+                wrap.innerHTML = '<span class="text-xs text-slate-400">지도에서 구를 클릭해주세요</span>';
+            } else {
+                wrap.innerHTML = selectedLawdCds.map((lawdCd, idx) => `
+                    <span class="text-xs font-bold text-white px-3 py-1.5 rounded-full flex items-center gap-1.5" style="background:${DISTRICT_COLORS[idx]}">
+                        ${districtDataByLawd[lawdCd]?.name || lawdCd}
+                        <i class="fa-solid fa-xmark cursor-pointer" onclick="toggleDistrict('${lawdCd}')"></i>
+                    </span>
+                `).join('');
+            }
+
+            // 인접(가장 가까운) 구 추천: 이미 선택된 구들의 중심점에서 가장 가까운, 아직 선택 안 된 구 3개
+            const suggestedWrap = document.getElementById('suggested-wrap');
+            const suggestedDiv = document.getElementById('suggested-districts');
+            if (selectedLawdCds.length > 0 && selectedLawdCds.length < 3) {
+                const candidates = Object.entries(districtDataByLawd)
+                    .filter(([lawdCd]) => !selectedLawdCds.includes(lawdCd))
+                    .map(([lawdCd, d]) => {
+                        const minDist = Math.min(...selectedLawdCds.map(sel => {
+                            const s = districtDataByLawd[sel];
+                            return distanceKm(s.centerLat, s.centerLng, d.centerLat, d.centerLng);
+                        }));
+                        return { lawdCd, name: d.name, dist: minDist };
+                    })
+                    .sort((a, b) => a.dist - b.dist)
+                    .slice(0, 3);
+
+                suggestedWrap.classList.remove('hidden');
+                suggestedDiv.innerHTML = candidates.map(c => `
+                    <button onclick="toggleDistrict('${c.lawdCd}')" class="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition">
+                        + ${c.name} <span class="text-indigo-400">(${c.dist.toFixed(1)}km)</span>
+                    </button>
+                `).join('');
+            } else {
+                suggestedWrap.classList.add('hidden');
+            }
+
+            const btn = document.getElementById('run-analysis-btn');
+            if (selectedLawdCds.length >= 2) {
+                btn.disabled = false;
+                btn.className = 'w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition';
+                btn.innerText = `${selectedLawdCds.length}개 지역 비교분석 실행`;
+            } else {
+                btn.disabled = true;
+                btn.className = 'w-full py-3 bg-slate-200 text-slate-400 font-bold text-sm rounded-xl transition';
+                btn.innerText = '지역을 2개 이상 선택하면 분석할 수 있어요';
+            }
+        }
+
+        async function runAnalysis() {
+            const resultDiv = document.getElementById('analysis-result');
+            resultDiv.innerHTML = `<div class="text-center py-10 text-slate-400 text-xs">실거래가 분석 중...</div>`;
+
+            const dealValue = document.getElementById('select-deal').value;
+            const housingValue = document.getElementById('select-housing').value;
+            const housingType = housingValue === '오피스텔' ? 'offi' : (housingValue === '빌라' ? 'villa' : 'apt');
+            const dealCategory = dealValue === '매매' ? 'trade' : 'rent';
+            const dealYmdInput = document.getElementById('input-deal-ymd').value;
+            if (!dealYmdInput) {
+                resultDiv.innerHTML = `<div class="text-center py-8 text-amber-600 text-xs">계약년월을 설정해주세요.</div>`;
+                return;
+            }
+            const dealYmd = dealYmdInput.replace('-', '');
+
+            let results;
+            try {
+                results = await Promise.all(selectedLawdCds.map(async (lawdCd) => {
+                    const d = districtDataByLawd[lawdCd];
+                    const res = await fetch('/api/molit/area-analysis', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ areas: [{ lawdCd }], dealYmd, months: 6, housingType, dealCategory }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) return { name: d.name, error: data.detail || data.error || '분석 실패' };
+                    return { name: d.name, data };
+                }));
+            } catch (e) {
+                resultDiv.innerHTML = `<div class="text-center py-8 text-rose-400 text-xs">분석 중 오류: ${e.message}</div>`;
+                return;
+            }
+
+            analysisCharts.forEach(c => c.destroy());
+            analysisCharts = [];
+
+            const valid = results.filter(r => r.data);
+            resultDiv.innerHTML = `
+                <div class="grid gap-2" style="grid-template-columns: repeat(${results.length}, 1fr);">
+                    ${results.map((r, idx) => `
+                        <div class="rounded-xl border p-3" style="border-color:${DISTRICT_COLORS[idx]}33; background:${DISTRICT_COLORS[idx]}0d;">
+                            <div class="text-xs font-bold mb-1" style="color:${DISTRICT_COLORS[idx]}">● ${r.name}</div>
+                            ${r.data ? `
+                                <div class="text-lg font-black text-slate-900">${r.data.monthlyTrend[r.data.monthlyTrend.length - 1]?.avgManwonPerPyeong?.toLocaleString() || '-'}<span class="text-xs font-medium text-slate-400"> 만원/평</span></div>
+                                <div class="text-[11px] text-slate-500">최근거래일: ${r.data.latestDealDate || '없음'} · 거래 ${r.data.totalCount}건</div>
+                            ` : `<div class="text-xs text-rose-400">${r.error}</div>`}
+                        </div>
+                    `).join('')}
+                </div>
+
+                ${valid.length > 0 ? `
+                <div class="bg-white border border-slate-200 rounded-xl p-3">
+                    <div class="text-xs font-bold text-slate-700 mb-2">평당가 비교 (${dealValue} 기준, 이번달)</div>
+                    <canvas id="chart-bar-price"></canvas>
+                </div>
+                <div class="bg-white border border-slate-200 rounded-xl p-3">
+                    <div class="text-xs font-bold text-slate-700 mb-2">최근 6개월 평당가 추이</div>
+                    <canvas id="chart-line-trend"></canvas>
+                </div>
+                <div class="grid gap-3" style="grid-template-columns: repeat(${results.length}, 1fr);">
+                    ${results.map((r, idx) => r.data ? `
+                        <div class="bg-white border border-slate-200 rounded-xl p-3">
+                            <div class="text-xs font-bold mb-2" style="color:${DISTRICT_COLORS[idx]}">${r.name} 상세</div>
+                            <table class="w-full text-[11px]">
+                                <tr class="text-slate-400"><td class="py-1">구간</td><td class="py-1 text-right">평당가</td><td class="py-1 text-right">건수</td></tr>
+                                ${r.data.floorSummary.map(f => `<tr class="border-t border-slate-100"><td class="py-1">${f.band}</td><td class="py-1 text-right font-bold">${f.avgManwonPerPyeong ? f.avgManwonPerPyeong.toLocaleString() : '-'}</td><td class="py-1 text-right text-slate-400">${f.count}</td></tr>`).join('')}
+                                <tr><td colspan="3" class="pt-2 pb-0.5 text-[9px] text-slate-400">평형별</td></tr>
+                                ${r.data.pyeongSummary.map(p => `<tr class="border-t border-slate-100"><td class="py-1">${p.band}</td><td class="py-1 text-right font-bold">${p.avgManwonPerPyeong ? p.avgManwonPerPyeong.toLocaleString() : '-'}</td><td class="py-1 text-right text-slate-400">${p.count}</td></tr>`).join('')}
+                            </table>
+                        </div>
+                    ` : '').join('')}
+                </div>
+                ` : `<div class="text-center py-8 text-slate-400 text-xs">모든 지역 분석에 실패했습니다.</div>`}
+            `;
+
+            if (valid.length === 0) return;
+
+            const barCtx = document.getElementById('chart-bar-price');
+            analysisCharts.push(new Chart(barCtx, {
+                type: 'bar',
+                data: {
+                    labels: results.map(r => r.name),
+                    datasets: [{
+                        data: results.map(r => r.data?.monthlyTrend?.[r.data.monthlyTrend.length - 1]?.avgManwonPerPyeong || 0),
+                        backgroundColor: results.map((_, idx) => DISTRICT_COLORS[idx]),
+                        borderRadius: 6,
+                    }],
+                },
+                options: { plugins: { legend: { display: false } }, scales: { y: { title: { display: true, text: '만원/평' } } } },
+            }));
+
+            const lineCtx = document.getElementById('chart-line-trend');
+            const allYms = [...new Set(valid.flatMap(r => r.data.monthlyTrend.map(m => m.ym)))].sort();
+            analysisCharts.push(new Chart(lineCtx, {
+                type: 'line',
+                data: {
+                    labels: allYms.map(ym => `${ym.slice(0, 4)}.${ym.slice(4, 6)}`),
+                    datasets: results.filter(r => r.data).map((r) => ({
+                        label: r.name,
+                        data: allYms.map(ym => r.data.monthlyTrend.find(m => m.ym === ym)?.avgManwonPerPyeong ?? null),
+                        borderColor: DISTRICT_COLORS[results.indexOf(r)],
+                        backgroundColor: DISTRICT_COLORS[results.indexOf(r)],
+                        tension: 0.3,
+                        spanGaps: true,
+                    })),
+                },
+                options: { plugins: { legend: { position: 'bottom' } }, scales: { y: { title: { display: true, text: '만원/평' } } } },
+            }));
+        }
+
+        loadGoogleMaps();
+    </script>
+</body>
+</html>

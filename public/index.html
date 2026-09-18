@@ -8,6 +8,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 폰트어썸 (아이콘) -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- 지역 비교분석 차트용 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- 구글 맵 키는 더 이상 클라이언트 파일에 하드코딩하지 않고,
          서버의 /api/config 에서 런타임에 받아온다. (국토부 인증키는 서버에만 존재) -->
     <script>
@@ -225,12 +227,17 @@
                 <i class="fa-solid fa-house-chimney text-lg flex-shrink-0"></i>
                 <div class="leading-tight min-w-0">
                     <h1 class="text-base font-bold tracking-tight">내 집 한방 뽑기</h1>
-                    <p class="text-[9px] text-white/80 font-medium truncate max-w-[170px] sm:max-w-none">발품은 줄이고, 내 집은 한 번에 - 바쁜 현대인을 위한 실거래 매물 원스톱 솔루션</p>
+                    <p class="text-[9px] text-white/80 font-medium truncate max-w-[170px] sm:max-w-none">국토부 실거래가 기반 시세 조회 - 발품 없이 한눈에 보는 부동산 시세 솔루션</p>
                 </div>
             </div>
-            <div class="text-xs bg-white/20 px-3 py-1.5 rounded-lg flex items-center space-x-2 flex-shrink-0">
-                <span id="geo-status" class="inline-block w-2 h-2 rounded-full bg-amber-300 animate-pulse"></span>
-                <span id="geo-text">현위치 연동</span>
+            <div class="flex items-center space-x-2 flex-shrink-0">
+                <a href="/analysis.html" class="text-xs bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg flex items-center space-x-1.5 transition">
+                    <i class="fa-solid fa-chart-column"></i><span>지역분석</span>
+                </a>
+                <div class="text-xs bg-white/20 px-3 py-1.5 rounded-lg flex items-center space-x-2">
+                    <span id="geo-status" class="inline-block w-2 h-2 rounded-full bg-amber-300 animate-pulse"></span>
+                    <span id="geo-text">현위치 연동</span>
+                </div>
             </div>
         </div>
     </header>
@@ -309,13 +316,13 @@
                     <span id="radius-badge" class="text-xs bg-indigo-50 text-indigo-700 font-bold px-2.5 py-1 rounded-md">반경 2km 내</span>
                 </div>
                 <div class="space-y-1 pt-1">
-                    <input type="range" id="input-radius" min="1" max="50" value="2" oninput="updateRadiusText(this.value)" class="custom-range-single">
+                    <input type="range" id="input-radius" min="1" max="20" value="2" oninput="updateRadiusText(this.value)" class="custom-range-single">
                     <div class="flex justify-between text-xs font-medium text-slate-400 px-1 pt-1">
                         <span>1km</span>
+                        <span>5km</span>
                         <span>10km</span>
+                        <span>15km</span>
                         <span>20km</span>
-                        <span>30km</span>
-                        <span>50km</span>
                     </div>
                 </div>
             </div>
@@ -422,13 +429,13 @@
                 </div>
                 <div class="space-y-2 text-xs font-medium text-slate-700" onchange="toggleCustomInputVisibility(); updateSummaryText();">
                     <label class="flex items-center space-x-2.5 cursor-pointer p-1">
-                        <input type="radio" name="sub-cond" value="사용 안 함" checked class="accent-indigo-600 w-4 h-4"> <span>사용 안 함</span>
+                        <input type="radio" name="sub-cond" value="사용 안 함" class="accent-indigo-600 w-4 h-4"> <span>사용 안 함</span>
                     </label>
                     <label class="flex items-center space-x-2.5 cursor-pointer p-1">
                         <input type="radio" name="sub-cond" value="subway" class="accent-indigo-600 w-4 h-4"> <span class="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span><span>역세권 (지하철역 500m 이내)</span>
                     </label>
                     <label class="flex items-center space-x-2.5 cursor-pointer p-1">
-                        <input type="radio" name="sub-cond" value="mart" class="accent-indigo-600 w-4 h-4"> <span class="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block"></span><span>백화점·아울렛·쇼핑센터 근처 (1km 이내)</span>
+                        <input type="radio" name="sub-cond" value="mart" checked class="accent-indigo-600 w-4 h-4"> <span class="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block"></span><span>백화점·아울렛·쇼핑센터 근처 (1km 이내)</span>
                     </label>
                     <label class="flex items-center space-x-2.5 cursor-pointer p-1">
                         <input type="radio" name="sub-cond" value="park" class="accent-indigo-600 w-4 h-4"> <span class="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span><span>공원 근처 (숲세권, 500m 이내)</span>
@@ -459,7 +466,7 @@
     <div id="drawer-results" class="fixed top-0 right-0 bottom-0 w-full max-w-md bg-white z-50 shadow-2xl right-slide-drawer flex flex-col">
         <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
             <h2 class="text-base font-bold text-slate-900 flex items-center">
-                <i class="fa-solid fa-file-invoice-dollar text-indigo-600 mr-2"></i>실거래가 매물 매칭 리스트
+                <i class="fa-solid fa-file-invoice-dollar text-indigo-600 mr-2"></i>실거래가 조회 결과
             </h2>
             <div class="flex items-center space-x-2">
                 <span id="result-count-badge" class="text-xs bg-slate-100 text-slate-600 font-semibold px-2.5 py-1 rounded-full">조회 0건</span>
@@ -476,6 +483,12 @@
             </div>
             <div id="condition-summary-text-mini" class="text-xs font-black text-indigo-950 tracking-tight">매매 · 아파트 · 0~30억 · 10~80평 · 사용 안 함 (반경 2km)</div>
         </button>
+
+        <!-- 아래 목록이 "현재 매물"이 아니라 국토부에 신고된 과거 실거래 내역임을 명확히 안내 -->
+        <div class="px-4 py-2 bg-amber-50 border-b border-amber-100 text-[11px] text-amber-700 leading-snug">
+            ℹ️ 아래는 국토부에 신고된 <strong>과거 실거래 내역</strong>(시세 참고용)입니다. 실제 매물 여부는 각 카드의
+            "네이버부동산에서 확인" 버튼으로 확인해주세요.
+        </div>
 
         <div id="result-container" class="flex-grow overflow-y-auto p-4 space-y-4">
             <div class="text-center py-10 text-slate-400 text-xs">
@@ -515,6 +528,7 @@
         let currentLat = 37.5665;
         let currentLng = 126.9780;
         let searchRadius = 2;
+        function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
         let markersList = [];
         let itemDataById = {};          // 비교하기 기능용 - 렌더링된 매물 데이터를 id로 조회
         let selectedCompareIds = new Set(); // 체크박스로 선택한 매물 id 목록
@@ -973,6 +987,20 @@
                 return;
             }
 
+            // 반경 5km 이상의 넓은 검색은 결과가 너무 많아져 느려지고 국토부 API 호출도
+            // 폭증하므로, 조건을 충분히 좁혔는지 먼저 확인한다. (아직 아무 요청도 시작 전이라
+            // alert()로 막아도 화면 상태가 꼬일 위험이 없다.)
+            if (searchRadius >= 5) {
+                const subCondVal = document.querySelector('input[name="sub-cond"]:checked').value;
+                const NEARBY_TYPES = ['subway', 'mart', 'park', 'school'];
+
+                if (!NEARBY_TYPES.includes(subCondVal)) {
+                    alert(`반경 ${searchRadius}km처럼 넓게 검색할 때는 추가조건에서 역세권·백화점·공원·학교 중 하나를 선택해주세요.`);
+                    toggleDrawer('drawer-conditions', true);
+                    return;
+                }
+            }
+
             btn.disabled = true;
             btnText.innerText = '국토부 실거래가 데이터 연동 및 분석 중...';
 
@@ -1022,7 +1050,7 @@
         // 검색 반경 원주의 북/동/남/서 4개 지점의 시군구코드를 모아, 반경이 걸치는 모든
         // 지역을 찾는다. 국토부 API가 시/군/구 단위로만 조회되기 때문에 반경이 중심
         // 지역의 경계를 넘으면 인접 지역도 함께 조회해야 실제로 반경만큼 데이터가 늘어난다.
-        async function resolveAreasForRadius() {
+        async function resolveAreasForRadius(radiusKm = searchRadius) {
             const areas = [];
             const seen = new Set();
             if (currentLawdCd) {
@@ -1032,14 +1060,14 @@
             }
 
             // 중심 지역이 이미 있고 반경이 작으면(한 구를 잘 안 벗어나는 수준) 추가 호출을 아낀다.
-            if (areas.length > 0 && searchRadius <= 4) return areas;
+            if (areas.length > 0 && radiusKm <= 4) return areas;
 
             // 예전엔 4방향(N/E/S/W)만 보고 지역 상한(4개)에 걸리면 서쪽 등 나중 순서 방향은
             // 결과가 와도 아예 확인도 안 하고 버렸다 - 그래서 반경을 넓혀도 한쪽만 채워지는
             // 문제가 있었다. 8방향으로 촘촘히 보고, 상한도 올려서 원 전체를 실제로 커버한다.
-            const MAX_AREAS = 8;
+            const MAX_AREAS = 5; // 반경 상한을 20km로 줄였으니, 지역 수도 낮춰서 국토부 API 동시 호출 폭증을 막는다
             const bearings = [0, 45, 90, 135, 180, 225, 270, 315]; // 북, 북동, 동, 남동, 남, 남서, 서, 북서
-            const points = bearings.map(b => destinationPoint(currentLat, currentLng, searchRadius, b));
+            const points = bearings.map(b => destinationPoint(currentLat, currentLng, radiusKm, b));
 
             const settled = await Promise.allSettled(
                 points.map(p => fetch(`/api/geocode/reverse?lat=${p.lat}&lng=${p.lng}`).then(r => r.json()))
@@ -1057,7 +1085,6 @@
             return areas;
         }
 
-        // 매매/전세는 "X억"으로, 월세는 "보증금 X억 / 월세 XX만원"으로 표시
         function formatPriceText(item) {
             if (item.dealCategory === 'rent' && item.monthlyRent > 0) {
                 return `${item.price}억/${item.monthlyRent}만`;
@@ -1184,6 +1211,13 @@
             }
             const dealYmd = dealYmdInput.replace('-', '');
 
+            // 추가조건(역세권/백화점 등)이 걸려있으면, 어차피 그 시설과의 근접 반경(500m~1km)이
+            // 최종 결과를 좌우하므로 넓은 반경으로 여러 지역을 조회할 필요가 없다. 이 경우
+            // 지역 탐색 자체를 1km로 좁혀서 국토부 API 호출량과 속도를 크게 개선한다.
+            const NEARBY_TYPES = ['subway', 'mart', 'park', 'school'];
+            const needsNearbyCheck = NEARBY_TYPES.includes(subCondType);
+            const effectiveRadius = needsNearbyCheck ? Math.min(searchRadius, 1) : searchRadius;
+
             const container = document.getElementById('result-container');
             container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs">국토교통부 실거래가 데이터를 불러오는 중...</div>`;
 
@@ -1192,7 +1226,7 @@
             let allTrades = [];
             let areasResolved = [];
             try {
-                const areas = await resolveAreasForRadius();
+                const areas = await resolveAreasForRadius(effectiveRadius);
                 if (areas.length === 0) {
                     throw new Error('조회 가능한 지역을 찾지 못했습니다.');
                 }
@@ -1248,35 +1282,36 @@
 
             // 2) 과거 6개월 기반 "추정 시세"는 별도 함수로 분리한다. 실거래가 이미 있으면 이건
             //    백그라운드에서 조용히 이어붙이고, 실거래가 하나도 없을 때만 여기서 기다린다.
+            //    지역 하나당 서버에서 내부적으로 7번(목표월+과거6개월)씩 국토부 API를 호출하므로,
+            //    지역을 전부 동시에 쏘면 순간적으로 호출이 몰려 "초당 호출 제한"에 걸리기 쉽다.
+            //    2개 지역씩 나눠서 처리해 순간 동시 호출량을 낮춘다.
             let primaryEstimateInfo = null; // "결과 0건" 요약 문구용 (중심 지역 기준 평당가)
             async function fetchEstimateCandidates() {
-                const settled = await Promise.allSettled(
-                    areasResolved.map(area =>
-                        fetch(`/api/molit/trades-with-estimate?lawdCd=${area.lawdCd}&dealYmd=${dealYmd}&lookback=6&housingType=${housingType}&dealCategory=${dealCategory}`)
-                            .then(r => r.json().then(data => ({ area, data, ok: r.ok })))
-                    )
-                );
+                const AREA_BATCH_SIZE = 2;
                 let list = [];
-                settled.forEach((result, idx) => {
-                    if (result.status !== 'fulfilled' || !result.value.ok) return;
-                    const { area, data } = result.value;
-                    const label = `${area.sido || ''} ${area.sigungu || ''}`.trim();
-                    (data.estimateTrades || []).forEach(t => list.push({ ...t, district: label }));
-                    if (idx === 0) primaryEstimateInfo = data; // 중심 지역(항상 areasResolved[0])
-                });
+                for (let i = 0; i < areasResolved.length; i += AREA_BATCH_SIZE) {
+                    const batch = areasResolved.slice(i, i + AREA_BATCH_SIZE);
+                    const settled = await Promise.allSettled(
+                        batch.map(area =>
+                            fetch(`/api/molit/trades-with-estimate?lawdCd=${area.lawdCd}&dealYmd=${dealYmd}&lookback=6&housingType=${housingType}&dealCategory=${dealCategory}`)
+                                .then(r => r.json().then(data => ({ area, data, ok: r.ok })))
+                        )
+                    );
+                    settled.forEach((result, idx) => {
+                        if (result.status !== 'fulfilled' || !result.value.ok) return;
+                        const { area, data } = result.value;
+                        const label = `${area.sido || ''} ${area.sigungu || ''}`.trim();
+                        (data.estimateTrades || []).forEach(t => list.push({ ...t, district: label }));
+                        if (i === 0 && idx === 0) primaryEstimateInfo = data; // 중심 지역(항상 areasResolved[0])
+                    });
+                    if (i + AREA_BATCH_SIZE < areasResolved.length) await sleep(300);
+                }
                 return list.filter(passesFilter);
             }
 
             const showEmptyMessage = () => {
                 setResultCount(0);
                 toggleDrawer('drawer-results', true); // 마커가 하나도 없으니 기다릴 필요 없이 바로 보여준다
-                const currentConditions = document.getElementById('condition-summary-text')?.innerText || '';
-                const conditionsChip = `
-                    <button onclick="toggleDrawer('drawer-conditions', true)" class="mt-4 inline-block text-left bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 hover:bg-indigo-100 transition cursor-pointer max-w-full">
-                        <div class="text-[10px] text-indigo-400 font-semibold mb-1">현재 적용 조건 (탭해서 조건 변경)</div>
-                        <div class="text-xs font-bold text-indigo-900 whitespace-normal break-keep">${currentConditions}</div>
-                    </button>
-                `;
                 if (primaryEstimateInfo?.areaAvgManwonPerPyeong) {
                     const midPyeong = isFinite(pyeongTo) ? (pyeongFrom + pyeongTo) / 2 : pyeongFrom;
                     const estimatedEok = Math.round((primaryEstimateInfo.areaAvgManwonPerPyeong * midPyeong / 10000) * 100) / 100;
@@ -1289,22 +1324,18 @@
                             설정하신 평형(${midPyeong}평 기준)으로 환산하면 대략 <strong class="text-indigo-700">${estimatedEok}억</strong> 수준으로 추정됩니다.
                             <span class="block text-slate-400 mt-1">(실거래 기반 추정치이며 실제 매물 시세와 다를 수 있습니다)</span>
                         </p>
-                        ${conditionsChip}
                     </div>`;
                 } else {
                     container.innerHTML = `<div class="text-center py-10 flex flex-col items-center">
                         <div class="text-9xl mb-2">💥</div>
                         <div class="text-7xl font-black text-slate-400 tracking-tight">꽝!</div>
                         <p class="text-xs text-slate-400 mt-3">${currentSigunguLabel || ''} ${dealYmdInput} 기준, 설정하신 조건에 맞는 실거래가 없습니다.</p>
-                        ${conditionsChip}
                     </div>`;
                 }
             };
 
             // 3) 좌표 변환을 위한 지오코딩 (단지명 기반 주소가 지번보다 매칭률이 높다)
             const addressOf = (t) => `${t.district || currentSigunguLabel || ''} ${t.umdNm} ${t.aptNm}`.trim();
-            const NEARBY_TYPES = ['subway', 'mart', 'park', 'school'];
-            const needsNearbyCheck = NEARBY_TYPES.includes(subCondType);
 
             let markerIndex = 0;
             let totalAppended = 0;
@@ -1530,7 +1561,7 @@
             let nearbyFacilityCache = null;
             async function ensureNearbyFacilities() {
                 if (nearbyFacilityCache) return nearbyFacilityCache;
-                const res = await fetch(`/api/nearby-facilities?type=${subCondType}&lat=${currentLat}&lng=${currentLng}&radiusKm=${searchRadius}`);
+                const res = await fetch(`/api/nearby-facilities?type=${subCondType}&lat=${currentLat}&lng=${currentLng}&radiusKm=${effectiveRadius}`);
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || data.error || '인근 시설 조회 실패');
                 nearbyFacilityCache = data;
@@ -1631,7 +1662,7 @@
                     };
                 }).filter(Boolean).filter(item => {
                     const dist = getDistanceFromLatLonInKm(currentLat, currentLng, item.lat, item.lng);
-                    return dist <= searchRadius;
+                    return dist <= effectiveRadius;
                 });
 
                 if (filtered.length === 0) return;

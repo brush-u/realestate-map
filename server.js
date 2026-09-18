@@ -451,6 +451,91 @@ function shiftYm(dealYmd, monthsBack) {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+// -----------------------------------------------------------------------
+// 4.7) 지역 비교분석 - 여러 지점의 실거래가를 최근 N개월치 모아 통계로 요약한다.
+//    지도에 개별 마커를 찍는 게 아니라 "평당가/추이/층별/평형별" 집계만 필요하므로
+//    좌표 지오코딩이 필요 없어 훨씬 가볍고 빠르다.
+// -----------------------------------------------------------------------
+app.post('/api/molit/area-analysis', async (req, res) => {
+  const { areas, dealYmd } = req.body || {};
+  const months = Math.min(parseInt(req.body?.months, 10) || 6, 12);
+  const housingType = req.body?.housingType || 'apt';
+  const dealCategory = req.body?.dealCategory || 'trade';
+
+  if (!Array.isArray(areas) || areas.length === 0) {
+    return res.status(400).json({ error: 'areas 배열이 필요합니다.' });
+  }
+  if (!dealYmd || !/^\d{6}$/.test(dealYmd)) {
+    return res.status(400).json({ error: 'dealYmd(YYYYMM)가 필요합니다.' });
+  }
+  if (!MOLIT_API_KEY) {
+    return res.status(500).json({ error: 'MOLIT_API_KEY가 서버에 설정되지 않았습니다.' });
+  }
+
+  const validAreas = areas.filter(a => a && a.lawdCd && /^\d{5}$/.test(a.lawdCd)).slice(0, 6);
+  if (validAreas.length === 0) {
+    return res.status(400).json({ error: '유효한 시군구코드가 없습니다.' });
+  }
+
+  const monthsList = [dealYmd, ...Array.from({ length: months - 1 }, (_, i) => shiftYm(dealYmd, i + 1))];
+  const monthlyTrend = [];
+  let targetTrades = [];
+
+  for (const ym of monthsList) {
+    let combined = [];
+    // 지역을 2개씩 나눠 조회해 순간 동시 호출량을 낮춘다 (초당 호출 제한 대비).
+    for (let i = 0; i < validAreas.length; i += 2) {
+      const batch = validAreas.slice(i, i + 2);
+      const results = await Promise.allSettled(batch.map(a => fetchMolitTradesRetried(a.lawdCd, ym, housingType, dealCategory)));
+      results.forEach(r => { if (r.status === 'fulfilled') combined.push(...r.value); });
+      if (i + 2 < validAreas.length) await sleep(150);
+    }
+    if (ym === dealYmd) targetTrades = combined;
+
+    const pricePerPyeongs = combined.filter(t => t.pyeong > 0).map(t => t.dealAmountManwon / t.pyeong);
+    const avgManwonPerPyeong = pricePerPyeongs.length
+      ? Math.round(pricePerPyeongs.reduce((a, b) => a + b, 0) / pricePerPyeongs.length)
+      : null;
+    monthlyTrend.push({ ym, avgManwonPerPyeong, count: combined.length });
+    await sleep(150);
+  }
+
+  // 층별 구간 요약 (목표월 기준)
+  const floorBuckets = [
+    { band: '저층(1~5층)', test: (f) => f <= 5 },
+    { band: '중층(6~15층)', test: (f) => f > 5 && f <= 15 },
+    { band: '고층(16층~)', test: (f) => f > 15 },
+  ];
+  const floorSummary = floorBuckets.map(({ band, test }) => {
+    const vals = targetTrades.filter(t => test(parseInt(t.floor, 10) || 0) && t.pyeong > 0).map(t => t.dealAmountManwon / t.pyeong);
+    return { band, avgManwonPerPyeong: vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null, count: vals.length };
+  });
+
+  // 평형별 구간 요약 (목표월 기준)
+  const pyeongBuckets = [
+    { band: '소형(~20평)', test: (p) => p <= 20 },
+    { band: '중형(20~35평)', test: (p) => p > 20 && p <= 35 },
+    { band: '대형(35평~)', test: (p) => p > 35 },
+  ];
+  const pyeongSummary = pyeongBuckets.map(({ band, test }) => {
+    const vals = targetTrades.filter(t => test(t.pyeong) && t.pyeong > 0).map(t => t.dealAmountManwon / t.pyeong);
+    return { band, avgManwonPerPyeong: vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null, count: vals.length };
+  });
+
+  const latestDealDate = targetTrades.length
+    ? targetTrades.map(t => `${t.dealYear}-${String(t.dealMonth).padStart(2, '0')}-${String(t.dealDay).padStart(2, '0')}`).sort().pop()
+    : null;
+
+  res.json({
+    dealYmd,
+    monthlyTrend: monthlyTrend.reverse(), // 오래된 달 -> 최신 달 순서로
+    totalCount: targetTrades.length,
+    latestDealDate,
+    floorSummary,
+    pyeongSummary,
+  });
+});
+
 app.get('/api/molit/trades', async (req, res) => {
   const { lawdCd, dealYmd } = req.query;
   const housingType = req.query.housingType || 'apt';
@@ -514,10 +599,18 @@ app.get('/api/molit/trades-with-estimate', async (req, res) => {
     });
   }
 
-  // 2) 과거 lookback개월을 동시에(병렬) best-effort로 조회 - 순차 조회보다 훨씬 빠르다.
+  // 2) 과거 lookback개월을 3개씩 나눠서 조회한다 (완전 병렬은 다른 지역의 동시 요청과
+  //    겹치면 "초당 호출 제한"에 걸리기 쉬워서, 순간 동시 호출량을 적당히 낮춘다).
   //    개별 월 조회가 실패해도 나머지는 계속 사용한다(추정치일 뿐이므로).
   const pastYms = Array.from({ length: lookback }, (_, i) => shiftYm(dealYmd, i + 1));
-  const pastResults = await Promise.allSettled(pastYms.map(ym => fetchMolitTradesRetried(lawdCd, ym, housingType, dealCategory)));
+  const pastResults = [];
+  const MONTH_BATCH_SIZE = 3;
+  for (let i = 0; i < pastYms.length; i += MONTH_BATCH_SIZE) {
+    const batch = pastYms.slice(i, i + MONTH_BATCH_SIZE);
+    const batchResults = await Promise.allSettled(batch.map(ym => fetchMolitTradesRetried(lawdCd, ym, housingType, dealCategory)));
+    pastResults.push(...batchResults);
+    if (i + MONTH_BATCH_SIZE < pastYms.length) await sleep(200);
+  }
 
   const complexKey = (t) => `${t.umdNm}__${t.aptNm}`;
   const targetKeys = new Set(targetTrades.map(complexKey));
