@@ -95,7 +95,7 @@
 
         <!-- 결과 -->
         <div id="analysis-result" class="space-y-4">
-            <div class="text-center py-10 text-slate-400 text-xs">지역을 선택하고 분석을 실행해보세요.</div>
+            <div class="text-center py-10 text-slate-400 text-sm">지역을 선택하고 분석을 실행해보세요.</div>
         </div>
     </div>
 
@@ -170,7 +170,7 @@
             districtDataByLawd = {};
             selectedLawdCds = [];
             renderSelection();
-            document.getElementById('analysis-result').innerHTML = `<div class="text-center py-10 text-slate-400 text-xs">지역을 선택하고 분석을 실행해보세요.</div>`;
+            document.getElementById('analysis-result').innerHTML = `<div class="text-center py-10 text-slate-400 text-sm">지역을 선택하고 분석을 실행해보세요.</div>`;
 
             map.setCenter(region.center);
             map.setZoom(region.zoom);
@@ -332,9 +332,57 @@
             }
         }
 
+        // 이미 갖고 있는 실거래가 데이터만으로 뽑을 수 있는 객관적 관찰 포인트.
+        // "사세요/파세요" 식의 재무적 추천이 아니라, 비교해볼 만한 사실을 짚어주는 정도로 제한한다.
+        function generateInsights(results) {
+            const valid = results.filter(r => r.data && r.data.totalCount > 0);
+            const insights = [];
+
+            if (valid.length < 2) return insights;
+
+            // 1) 최저가 지역
+            const byPrice = valid
+                .map(r => ({ name: r.name, price: r.data.monthlyTrend[r.data.monthlyTrend.length - 1]?.avgManwonPerPyeong }))
+                .filter(x => x.price != null)
+                .sort((a, b) => a.price - b.price);
+            if (byPrice.length >= 2) {
+                const cheapest = byPrice[0], priciest = byPrice[byPrice.length - 1];
+                const diffPct = Math.round((1 - cheapest.price / priciest.price) * 100);
+                insights.push(`💰 <strong>${cheapest.name}</strong>의 평당가가 가장 낮습니다 (<strong>${priciest.name}</strong>보다 약 ${diffPct}% 낮음).`);
+            }
+
+            // 2) 6개월 추이(상승/하락률)
+            const trends = valid.map(r => {
+                const t = r.data.monthlyTrend.filter(m => m.avgManwonPerPyeong != null);
+                if (t.length < 2) return null;
+                const first = t[0].avgManwonPerPyeong, last = t[t.length - 1].avgManwonPerPyeong;
+                return { name: r.name, changePct: Math.round(((last - first) / first) * 100) };
+            }).filter(Boolean);
+            trends.forEach(t => {
+                if (Math.abs(t.changePct) >= 3) {
+                    insights.push(`${t.changePct > 0 ? '📈' : '📉'} <strong>${t.name}</strong>는 최근 6개월간 평당가가 ${t.changePct}% ${t.changePct > 0 ? '상승' : '하락'}했습니다.`);
+                }
+            });
+
+            // 3) 거래량(유동성) 비교
+            const byVolume = valid.map(r => ({ name: r.name, count: r.data.totalCount })).sort((a, b) => b.count - a.count);
+            if (byVolume.length >= 2 && byVolume[0].count >= byVolume[byVolume.length - 1].count * 2) {
+                insights.push(`🔄 <strong>${byVolume[0].name}</strong>는 이번달 거래 ${byVolume[0].count}건으로 <strong>${byVolume[byVolume.length - 1].name}</strong>(${byVolume[byVolume.length - 1].count}건)보다 거래가 훨씬 활발합니다.`);
+            }
+
+            // 4) 거래건수가 너무 적어 평균값 신뢰도가 낮을 수 있는 지역 경고
+            valid.forEach(r => {
+                if (r.data.totalCount > 0 && r.data.totalCount <= 3) {
+                    insights.push(`⚠️ <strong>${r.name}</strong>는 이번달 거래건수가 ${r.data.totalCount}건으로 적어, 평균 평당가가 특정 매물에 치우쳤을 수 있습니다.`);
+                }
+            });
+
+            return insights;
+        }
+
         async function runAnalysis() {
             const resultDiv = document.getElementById('analysis-result');
-            resultDiv.innerHTML = `<div class="text-center py-10 text-slate-400 text-xs">실거래가 분석 중...</div>`;
+            resultDiv.innerHTML = `<div class="text-center py-10 text-slate-400 text-sm">실거래가 분석 중...</div>`;
 
             const dealValue = document.getElementById('select-deal').value;
             const housingValue = document.getElementById('select-housing').value;
@@ -342,7 +390,7 @@
             const dealCategory = dealValue === '매매' ? 'trade' : 'rent';
             const dealYmdInput = document.getElementById('input-deal-ymd').value;
             if (!dealYmdInput) {
-                resultDiv.innerHTML = `<div class="text-center py-8 text-amber-600 text-xs">계약년월을 설정해주세요.</div>`;
+                resultDiv.innerHTML = `<div class="text-center py-8 text-amber-600 text-sm">계약년월을 설정해주세요.</div>`;
                 return;
             }
             const dealYmd = dealYmdInput.replace('-', '');
@@ -361,7 +409,7 @@
                     return { name: d.name, data };
                 }));
             } catch (e) {
-                resultDiv.innerHTML = `<div class="text-center py-8 text-rose-400 text-xs">분석 중 오류: ${e.message}</div>`;
+                resultDiv.innerHTML = `<div class="text-center py-8 text-rose-400 text-sm">분석 중 오류: ${e.message}</div>`;
                 return;
             }
 
@@ -369,42 +417,55 @@
             analysisCharts = [];
 
             const valid = results.filter(r => r.data);
+            const insights = generateInsights(results);
             resultDiv.innerHTML = `
+                <div class="flex items-center gap-2 pt-1">
+                    <i class="fa-solid fa-chart-line text-indigo-600 text-lg"></i>
+                    <h2 class="text-lg font-black text-slate-900">분석 결과</h2>
+                </div>
+
+                ${insights.length > 0 ? `
+                <div class="bg-indigo-50 border-2 border-indigo-200 rounded-xl p-4 space-y-2.5">
+                    <div class="text-sm font-black text-indigo-700 mb-1">💡 참고할 만한 포인트</div>
+                    ${insights.map(i => `<p class="text-sm text-indigo-900 leading-relaxed font-medium">${i}</p>`).join('')}
+                    <p class="text-xs text-indigo-400 pt-1">※ 실거래가 데이터를 바탕으로 한 참고 정보이며, 투자/매수 조언이 아닙니다.</p>
+                </div>
+                ` : ''}
                 <div class="grid gap-2" style="grid-template-columns: repeat(${results.length}, 1fr);">
                     ${results.map((r, idx) => `
-                        <div class="rounded-xl border p-3" style="border-color:${DISTRICT_COLORS[idx]}33; background:${DISTRICT_COLORS[idx]}0d;">
-                            <div class="text-xs font-bold mb-1" style="color:${DISTRICT_COLORS[idx]}">● ${r.name}</div>
+                        <div class="rounded-xl border-2 p-4" style="border-color:${DISTRICT_COLORS[idx]}55; background:${DISTRICT_COLORS[idx]}0d;">
+                            <div class="text-sm font-black mb-1.5" style="color:${DISTRICT_COLORS[idx]}">● ${r.name}</div>
                             ${r.data ? `
-                                <div class="text-lg font-black text-slate-900">${r.data.monthlyTrend[r.data.monthlyTrend.length - 1]?.avgManwonPerPyeong?.toLocaleString() || '-'}<span class="text-xs font-medium text-slate-400"> 만원/평</span></div>
-                                <div class="text-[11px] text-slate-500">최근거래일: ${r.data.latestDealDate || '없음'} · 거래 ${r.data.totalCount}건</div>
-                            ` : `<div class="text-xs text-rose-400">${r.error}</div>`}
+                                <div class="text-3xl font-black text-slate-900 leading-tight">${r.data.monthlyTrend[r.data.monthlyTrend.length - 1]?.avgManwonPerPyeong?.toLocaleString() || '-'}<span class="text-sm font-bold text-slate-400"> 만원/평</span></div>
+                                <div class="text-xs text-slate-500 mt-1 font-medium">최근거래일: ${r.data.latestDealDate || '없음'} · 거래 ${r.data.totalCount}건</div>
+                            ` : `<div class="text-sm text-rose-400 font-bold">${r.error}</div>`}
                         </div>
                     `).join('')}
                 </div>
 
                 ${valid.length > 0 ? `
-                <div class="bg-white border border-slate-200 rounded-xl p-3">
-                    <div class="text-xs font-bold text-slate-700 mb-2">평당가 비교 (${dealValue} 기준, 이번달)</div>
+                <div class="bg-white border border-slate-200 rounded-xl p-4">
+                    <div class="text-sm font-black text-slate-800 mb-2">평당가 비교 (${dealValue} 기준, 이번달)</div>
                     <canvas id="chart-bar-price"></canvas>
                 </div>
-                <div class="bg-white border border-slate-200 rounded-xl p-3">
-                    <div class="text-xs font-bold text-slate-700 mb-2">최근 6개월 평당가 추이</div>
+                <div class="bg-white border border-slate-200 rounded-xl p-4">
+                    <div class="text-sm font-black text-slate-800 mb-2">최근 6개월 평당가 추이</div>
                     <canvas id="chart-line-trend"></canvas>
                 </div>
                 <div class="grid gap-3" style="grid-template-columns: repeat(${results.length}, 1fr);">
                     ${results.map((r, idx) => r.data ? `
-                        <div class="bg-white border border-slate-200 rounded-xl p-3">
-                            <div class="text-xs font-bold mb-2" style="color:${DISTRICT_COLORS[idx]}">${r.name} 상세</div>
-                            <table class="w-full text-[11px]">
-                                <tr class="text-slate-400"><td class="py-1">구간</td><td class="py-1 text-right">평당가</td><td class="py-1 text-right">건수</td></tr>
-                                ${r.data.floorSummary.map(f => `<tr class="border-t border-slate-100"><td class="py-1">${f.band}</td><td class="py-1 text-right font-bold">${f.avgManwonPerPyeong ? f.avgManwonPerPyeong.toLocaleString() : '-'}</td><td class="py-1 text-right text-slate-400">${f.count}</td></tr>`).join('')}
-                                <tr><td colspan="3" class="pt-2 pb-0.5 text-[9px] text-slate-400">평형별</td></tr>
-                                ${r.data.pyeongSummary.map(p => `<tr class="border-t border-slate-100"><td class="py-1">${p.band}</td><td class="py-1 text-right font-bold">${p.avgManwonPerPyeong ? p.avgManwonPerPyeong.toLocaleString() : '-'}</td><td class="py-1 text-right text-slate-400">${p.count}</td></tr>`).join('')}
+                        <div class="bg-white border border-slate-200 rounded-xl p-4">
+                            <div class="text-sm font-black mb-2" style="color:${DISTRICT_COLORS[idx]}">${r.name} 상세</div>
+                            <table class="w-full text-sm">
+                                <tr class="text-slate-400 text-xs"><td class="py-1.5">구간</td><td class="py-1.5 text-right">평당가</td><td class="py-1.5 text-right">건수</td></tr>
+                                ${r.data.floorSummary.map(f => `<tr class="border-t border-slate-100"><td class="py-1.5">${f.band}</td><td class="py-1.5 text-right font-bold">${f.avgManwonPerPyeong ? f.avgManwonPerPyeong.toLocaleString() : '-'}</td><td class="py-1.5 text-right text-slate-400">${f.count}</td></tr>`).join('')}
+                                <tr><td colspan="3" class="pt-2.5 pb-1 text-xs text-slate-400">평형별</td></tr>
+                                ${r.data.pyeongSummary.map(p => `<tr class="border-t border-slate-100"><td class="py-1.5">${p.band}</td><td class="py-1.5 text-right font-bold">${p.avgManwonPerPyeong ? p.avgManwonPerPyeong.toLocaleString() : '-'}</td><td class="py-1.5 text-right text-slate-400">${p.count}</td></tr>`).join('')}
                             </table>
                         </div>
                     ` : '').join('')}
                 </div>
-                ` : `<div class="text-center py-8 text-slate-400 text-xs">모든 지역 분석에 실패했습니다.</div>`}
+                ` : `<div class="text-center py-8 text-slate-400 text-sm">모든 지역 분석에 실패했습니다.</div>`}
             `;
 
             if (valid.length === 0) return;
