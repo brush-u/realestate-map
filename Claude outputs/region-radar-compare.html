@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>지역 비교 · 6대 지표 레이더 차트 (예시)</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --axis-line:      #c3c2b7;
+    --border-ring:    rgba(11,11,11,0.10);
+
+    --series-1: #2a78d6; /* blue   - slot 1 */
+    --series-2: #eb6834; /* orange - slot 2 */
+    --series-3: #1baf7a; /* aqua   - slot 3 */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --axis-line:      #383835;
+      --border-ring:    rgba(255,255,255,0.10);
+
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page-plane:     #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --axis-line:      #383835;
+    --border-ring:    rgba(255,255,255,0.10);
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page-plane);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 28px 20px 56px;
+  }
+  .eyebrow {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .02em;
+    color: var(--text-muted);
+    margin: 0 0 6px;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 4px;
+    font-weight: 700;
+  }
+  .sub {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0 0 22px;
+    line-height: 1.5;
+  }
+  .card {
+    background: var(--surface-1);
+    border-radius: 14px;
+    border: 1px solid var(--border-ring);
+    padding: 20px 20px 8px;
+    margin-bottom: 18px;
+  }
+  .card h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 0 0 12px;
+  }
+
+  /* region selector chips */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .chip {
+    appearance: none;
+    border: 1px solid var(--axis-line);
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    padding: 7px 14px 7px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    transition: border-color .15s, background .15s;
+  }
+  .chip:hover { background: var(--border-ring); }
+  .chip:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  .chip .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--axis-line);
+    flex: none;
+  }
+  .chip[data-slot="0"] { border-color: var(--series-1); }
+  .chip[data-slot="0"] .dot { background: var(--series-1); }
+  .chip[data-slot="1"] { border-color: var(--series-2); }
+  .chip[data-slot="1"] .dot { background: var(--series-2); }
+  .chip[data-slot="2"] { border-color: var(--series-3); }
+  .chip[data-slot="2"] .dot { background: var(--series-3); }
+  .chip[data-disabled="true"] { opacity: .4; cursor: not-allowed; }
+  .hint { font-size: 12px; color: var(--text-muted); margin: 0 0 4px; }
+
+  /* chart area */
+  .chart-row {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .chart-box { position: relative; flex: none; }
+  svg { display: block; }
+
+  .axis-label {
+    font-size: 12px;
+    fill: var(--text-secondary);
+    text-anchor: middle;
+  }
+  .grid-ring { fill: none; stroke: var(--gridline); stroke-width: 1; }
+  .axis-line { stroke: var(--axis-line); stroke-width: 1; }
+  .hit-zone { fill: transparent; stroke: transparent; cursor: pointer; }
+  .hit-zone:focus-visible { fill: rgba(0,0,0,0.04); }
+
+  .series-path { fill-opacity: 0.10; stroke-width: 2; stroke-linejoin: round; }
+  .series-dot-ring { fill: var(--surface-1); }
+
+  /* legend */
+  .legend {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 160px;
+    padding-top: 4px;
+  }
+  .legend-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 13px;
+  }
+  .legend-key {
+    width: 14px; height: 2px; border-radius: 1px; flex: none;
+    transform: translateY(-4px);
+  }
+  .legend-name { color: var(--text-primary); font-weight: 600; }
+  .legend-empty { color: var(--text-muted); font-size: 13px; }
+
+  /* tooltip */
+  .tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--surface-1);
+    border: 1px solid var(--border-ring);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+    padding: 8px 10px;
+    font-size: 12px;
+    min-width: 140px;
+    opacity: 0;
+    transition: opacity .1s;
+    z-index: 5;
+  }
+  .tooltip.show { opacity: 1; }
+  .tooltip .tt-title {
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+  }
+  .tooltip .tt-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 0;
+  }
+  .tooltip .tt-key { width: 10px; height: 2px; flex: none; border-radius: 1px; }
+  .tooltip .tt-name { color: var(--text-secondary); flex: 1; }
+  .tooltip .tt-val { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+
+  /* table view twin (accessibility / contrast relief) */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 4px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--gridline);
+    font-variant-numeric: tabular-nums;
+  }
+  th { color: var(--text-muted); font-weight: 600; font-size: 12px; }
+  td.metric { color: var(--text-secondary); font-variant-numeric: normal; }
+  td.val { color: var(--text-primary); font-weight: 600; }
+  .th-region { display: flex; align-items: center; gap: 6px; }
+  .th-key { width: 10px; height: 2px; border-radius: 1px; }
+
+  .cap-note {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 10px 0 14px;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow">실거래 한방검색 · UI 예시 (Mock)</p>
+  <h1>지역 비교 — 6대 지표 레이더 차트</h1>
+  <p class="sub">
+    지역을 최대 3개까지 선택하면 CCTV·학군·교통·인프라·소음관리·재난안전 6개 지표를
+    한 화면에서 겹쳐 비교합니다. 아래 수치는 설명용 예시 데이터이며 실제 공공데이터
+    연동 값이 아닙니다.
+  </p>
+
+  <div class="card">
+    <h2>비교할 지역 선택 (최대 3개)</h2>
+    <div class="chips" id="chipRow"></div>
+    <p class="hint" id="capHint"></p>
+  </div>
+
+  <div class="card">
+    <h2>지표 비교</h2>
+    <div class="chart-row">
+      <div class="chart-box">
+        <svg id="radar" width="360" height="360" viewBox="0 0 360 360" role="img" aria-label="6대 지표 레이더 차트"></svg>
+        <div class="tooltip" id="tooltip"></div>
+      </div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <p class="cap-note">
+      비교 차트는 항목이 겹쳐 보이는 형태(all-pairs)라 3개 지역까지만 동시에
+      색상으로 구분이 보장됩니다. 4개 이상을 비교하려면 지역을 나눠 다시 선택하거나
+      표 형태로 확인하세요.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>표로 보기</h2>
+    <div style="overflow-x:auto;">
+      <table id="dataTable"></table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var METRICS = ["CCTV", "학군", "교통", "인프라", "소음관리", "재난안전"];
+
+  // Example / mock data only — not live API data.
+  var REGIONS = {
+    "강남구": [82, 95, 90, 88, 55, 78],
+    "마포구": [68, 70, 85, 80, 62, 74],
+    "송파구": [75, 88, 80, 82, 70, 85],
+    "노원구": [60, 65, 60, 65, 80, 68],
+    "강서구": [58, 60, 72, 70, 75, 72],
+    "용산구": [65, 72, 88, 84, 58, 66]
+  };
+  var REGION_NAMES = Object.keys(REGIONS);
+
+  var SERIES_COLORS = [
+    "var(--series-1)",
+    "var(--series-2)",
+    "var(--series-3)"
+  ];
+
+  // fixed 3-slot state; a region keeps its slot until it is deselected,
+  // so removing one region never recolors the others (no recolor-on-filter).
+  var slots = [null, null, null];
+
+  var chipRow = document.getElementById("chipRow");
+  var capHint = document.getElementById("capHint");
+  var legend = document.getElementById("legend");
+  var svg = document.getElementById("radar");
+  var tooltip = document.getElementById("tooltip");
+  var tableEl = document.getElementById("dataTable");
+
+  var CX = 180, CY = 180, R = 130;
+  var N = METRICS.length;
+
+  function pointFor(index, valueFrac) {
+    var angle = -Math.PI / 2 + (index * 2 * Math.PI) / N;
+    var r = R * valueFrac;
+    return [CX + r * Math.cos(angle), CY + r * Math.sin(angle)];
+  }
+
+  function toggleRegion(name) {
+    var existingSlot = slots.indexOf(name);
+    if (existingSlot !== -1) {
+      slots[existingSlot] = null;
+    } else {
+      var freeSlot = slots.indexOf(null);
+      if (freeSlot === -1) return; // full — ignore, cap enforced
+      slots[freeSlot] = name;
+    }
+    render();
+  }
+
+  function buildChips() {
+    chipRow.innerHTML = "";
+    REGION_NAMES.forEach(function (name) {
+      var slotIdx = slots.indexOf(name);
+      var full = slots.indexOf(null) === -1;
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chip";
+      btn.setAttribute("aria-pressed", slotIdx !== -1 ? "true" : "false");
+      if (slotIdx !== -1) btn.setAttribute("data-slot", String(slotIdx));
+      if (slotIdx === -1 && full) btn.setAttribute("data-disabled", "true");
+      var dot = document.createElement("span");
+      dot.className = "dot";
+      btn.appendChild(dot);
+      btn.appendChild(document.createTextNode(name));
+      btn.addEventListener("click", function () { toggleRegion(name); });
+      chipRow.appendChild(btn);
+    });
+    var count = slots.filter(Boolean).length;
+    capHint.textContent = count + " / 3 개 선택됨";
+  }
+
+  function buildGrid() {
+    var parts = [];
+    // rings at 20/40/60/80/100%
+    [0.2, 0.4, 0.6, 0.8, 1.0].forEach(function (frac) {
+      var pts = [];
+      for (var i = 0; i < N; i++) pts.push(pointFor(i, frac).join(","));
+      parts.push('<polygon class="grid-ring" points="' + pts.join(" ") + '"></polygon>');
+    });
+    // spokes + labels + hit zones
+    for (var i = 0; i < N; i++) {
+      var edge = pointFor(i, 1.0);
+      parts.push('<line class="axis-line" x1="' + CX + '" y1="' + CY + '" x2="' + edge[0] + '" y2="' + edge[1] + '"></line>');
+      var labelPt = pointFor(i, 1.18);
+      parts.push('<text class="axis-label" x="' + labelPt[0] + '" y="' + labelPt[1] + '">' + METRICS[i] + '</text>');
+    }
+    return parts.join("");
+  }
+
+  function buildSeriesSVG() {
+    var parts = [];
+    slots.forEach(function (name, slotIdx) {
+      if (!name) return;
+      var values = REGIONS[name];
+      var color = SERIES_COLORS[slotIdx];
+      var pts = values.map(function (v, i) { return pointFor(i, v / 100); });
+      var pointsAttr = pts.map(function (p) { return p.join(","); }).join(" ");
+      parts.push(
+        '<polygon class="series-path" points="' + pointsAttr + '" style="stroke:' + color + ';fill:' + color + '"></polygon>'
+      );
+      pts.forEach(function (p) {
+        parts.push('<circle cx="' + p[0] + '" cy="' + p[1] + '" r="6" class="series-dot-ring"></circle>');
+        parts.push('<circle cx="' + p[0] + '" cy="' + p[1] + '" r="4" style="fill:' + color + '"></circle>');
+      });
+    });
+    return parts.join("");
+  }
+
+  function buildHitZones() {
+    // one generous hit wedge per axis, for hover + keyboard focus
+    var parts = [];
+    for (var i = 0; i < N; i++) {
+      var far = pointFor(i, 1.28);
+      parts.push(
+        '<line class="hit-zone" tabindex="0" role="button" aria-label="' + METRICS[i] + ' 지표 값 보기" ' +
+        'data-idx="' + i + '" x1="' + CX + '" y1="' + CY + '" x2="' + far[0] + '" y2="' + far[1] + '" ' +
+        'stroke-width="28" stroke-linecap="round"></line>'
+      );
+    }
+    return parts.join("");
+  }
+
+  function renderChart() {
+    svg.innerHTML = buildGrid() + buildSeriesSVG() + buildHitZones();
+    Array.prototype.forEach.call(svg.querySelectorAll(".hit-zone"), function (el) {
+      el.addEventListener("pointerenter", function () { showTooltip(el); });
+      el.addEventListener("pointermove", function () { showTooltip(el); });
+      el.addEventListener("pointerleave", hideTooltip);
+      el.addEventListener("focus", function () { showTooltip(el); });
+      el.addEventListener("blur", hideTooltip);
+    });
+  }
+
+  function showTooltip(el) {
+    var idx = parseInt(el.getAttribute("data-idx"), 10);
+    var active = slots.filter(Boolean);
+    if (active.length === 0) { hideTooltip(); return; }
+    var rows = "";
+    slots.forEach(function (name, slotIdx) {
+      if (!name) return;
+      var val = REGIONS[name][idx];
+      var color = SERIES_COLORS[slotIdx];
+      rows +=
+        '<div class="tt-row"><span class="tt-key" style="background:' + color + '"></span>' +
+        '<span class="tt-name"></span><span class="tt-val"></span></div>';
+    });
+    tooltip.innerHTML = '<div class="tt-title"></div>' + rows;
+    var titleEl = tooltip.querySelector(".tt-title");
+    titleEl.textContent = METRICS[idx];
+    var rowEls = tooltip.querySelectorAll(".tt-row");
+    var i2 = 0;
+    slots.forEach(function (name) {
+      if (!name) return;
+      var val = REGIONS[name][idx];
+      rowEls[i2].querySelector(".tt-name").textContent = name;
+      rowEls[i2].querySelector(".tt-val").textContent = val;
+      i2++;
+    });
+    var far = pointFor(idx, 1.05);
+    tooltip.style.left = far[0] + "px";
+    tooltip.style.top = far[1] + "px";
+    tooltip.classList.add("show");
+  }
+  function hideTooltip() { tooltip.classList.remove("show"); }
+
+  function buildLegend() {
+    var active = slots.filter(Boolean);
+    if (active.length === 0) {
+      legend.innerHTML = '<p class="legend-empty">지역을 선택하면 범례가 표시됩니다.</p>';
+      return;
+    }
+    if (active.length === 1) {
+      // single series: no legend box, just plain text (chart title already names it)
+      var only = active[0];
+      var row = document.createElement("div");
+      row.className = "legend-row";
+      row.textContent = only + " (1개 지역 비교 중 — 지역을 더 추가해 보세요)";
+      legend.innerHTML = "";
+      legend.appendChild(row);
+      return;
+    }
+    legend.innerHTML = "";
+    slots.forEach(function (name, slotIdx) {
+      if (!name) return;
+      var row = document.createElement("div");
+      row.className = "legend-row";
+      var key = document.createElement("span");
+      key.className = "legend-key";
+      key.style.background = SERIES_COLORS[slotIdx];
+      var nameEl = document.createElement("span");
+      nameEl.className = "legend-name";
+      nameEl.textContent = name;
+      row.appendChild(key);
+      row.appendChild(nameEl);
+      legend.appendChild(row);
+    });
+  }
+
+  function buildTable() {
+    var active = [];
+    slots.forEach(function (name, slotIdx) { if (name) active.push({ name: name, slot: slotIdx }); });
+    if (active.length === 0) {
+      tableEl.innerHTML = '<tr><td class="metric">지역을 선택하면 표가 표시됩니다.</td></tr>';
+      return;
+    }
+    var thead = "<thead><tr><th>지표</th>";
+    active.forEach(function (a) {
+      thead +=
+        '<th><span class="th-region"><span class="th-key" style="background:' + SERIES_COLORS[a.slot] + '"></span><span></span></span></th>';
+    });
+    thead += "</tr></thead>";
+
+    var tbody = "<tbody>";
+    METRICS.forEach(function (metric, i) {
+      tbody += '<tr><td class="metric"></td>';
+      active.forEach(function (a) {
+        tbody += '<td class="val"></td>';
+      });
+      tbody += "</tr>";
+    });
+    tbody += "</tbody>";
+
+    tableEl.innerHTML = thead + tbody;
+
+    // fill text via textContent (labels are untrusted-shaped data — never innerHTML)
+    var headerCells = tableEl.querySelectorAll("thead .th-region span:last-child");
+    active.forEach(function (a, i) { headerCells[i].textContent = a.name; });
+
+    var bodyRows = tableEl.querySelectorAll("tbody tr");
+    METRICS.forEach(function (metric, rIdx) {
+      bodyRows[rIdx].querySelector(".metric").textContent = metric;
+      var valCells = bodyRows[rIdx].querySelectorAll(".val");
+      active.forEach(function (a, cIdx) {
+        valCells[cIdx].textContent = REGIONS[a.name][rIdx];
+      });
+    });
+  }
+
+  function render() {
+    buildChips();
+    renderChart();
+    buildLegend();
+    buildTable();
+    hideTooltip();
+  }
+
+  // demo default state: 2 of 3 slots filled
+  slots[0] = "강남구";
+  slots[1] = "마포구";
+  render();
+})();
+</script>
+</body>
+</html>

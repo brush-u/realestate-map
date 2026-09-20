@@ -10,7 +10,7 @@
         html, body { height: 100%; margin: 0; overflow: hidden; font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; background: #000; }
         #camera-video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
         #ar-overlay { position: fixed; inset: 0; pointer-events: none; }
-        .ar-pin { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; transition: left 0.15s linear, top 0.15s linear; }
+        .ar-pin { position: absolute; pointer-events: auto; transition: left 0.15s linear, bottom 0.15s linear; touch-action: manipulation; }
     </style>
 </head>
 <body>
@@ -78,12 +78,16 @@
             </div>
         </div>
         <div id="detail-extra" class="text-xs text-slate-500 mt-2 leading-relaxed"></div>
+        <a id="detail-naver-link" href="#" target="_blank" class="mt-3 flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg py-2.5 transition">
+            <i class="fa-solid fa-magnifying-glass text-[11px]"></i>
+            <span>네이버부동산에서 확인</span>
+        </a>
     </div>
 
     <script>
         let currentLat = null, currentLng = null, currentHeading = null;
         let complexes = [];
-        const FOV_DEG = 65; // 후면 카메라의 대략적인 수평 화각(기기마다 다름 - 근사치)
+        const FOV_DEG = 90; // 후면 카메라의 대략적인 수평 화각(기기마다 다름 - 근사치). 나침반 오차를 감안해 넉넉하게 잡음
         const MAX_DIST_KM = 1.5;
 
         function toRad(d) { return d * Math.PI / 180; }
@@ -133,6 +137,7 @@
             }
         }
 
+        let lastRenderAt = 0;
         function handleOrientation(event) {
             let heading;
             if (event.webkitCompassHeading !== undefined) {
@@ -143,7 +148,15 @@
                 return;
             }
             currentHeading = (heading + 360) % 360;
-            renderOverlay();
+
+            // 방향센서는 초당 수십 번씩 발생하는데, 그때마다 화면을 통째로 다시 그리면
+            // 손가락이 아이콘을 누르는 그 순간 요소가 통째로 교체되면서 탭이 씹히는 문제가
+            // 있었다. 다시 그리는 빈도를 제한해서 탭할 시간을 확보한다.
+            const now = Date.now();
+            if (now - lastRenderAt > 200) {
+                lastRenderAt = now;
+                renderOverlay();
+            }
         }
 
         let lastFetchedAt = 0;
@@ -162,6 +175,8 @@
             }
         }
 
+        let currentRegionInfo = null; // {sido, sigungu} - 네이버부동산 검색어 조합에 사용
+
         async function refreshComplexes() {
             if (currentLat === null) return;
             document.getElementById('found-count-text').innerText = '주변 실거래 단지 조회 중...';
@@ -176,6 +191,7 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || data.error || '조회 실패');
 
+                currentRegionInfo = data.region || null;
                 complexes = (data.complexes || []).map(c => ({
                     ...c,
                     bearing: calcBearing(currentLat, currentLng, c.lat, c.lng),
@@ -207,26 +223,39 @@
                 return;
             }
 
-            const visible = complexes.filter(c => Math.abs(normalizeAngleDiff(c.bearing - currentHeading)) <= FOV_DEG / 2 && c.distanceKm <= MAX_DIST_KM);
+            const inRange = complexes.filter(c => c.distanceKm <= MAX_DIST_KM);
+            const visible = inRange.filter(c => Math.abs(normalizeAngleDiff(c.bearing - currentHeading)) <= FOV_DEG / 2);
 
-            overlay.innerHTML = visible.map(c => {
+            let pinsHtml = visible.map(c => {
                 const diff = normalizeAngleDiff(c.bearing - currentHeading);
                 const leftPercent = 50 + (diff / (FOV_DEG / 2)) * 50;
                 const t = Math.min(c.distanceKm / MAX_DIST_KM, 1); // 0=가까움, 1=멀음
                 const bottomPercent = 18 + t * 45;
-                const scale = 1.25 - t * 0.6;
+                const scale = 1.5 - t * 0.5; // 최소 크기를 올려서 멀리 있어도 탭하기 쉽게 함
 
                 return `
                     <div class="ar-pin" style="left:${leftPercent}%; bottom:${bottomPercent}%; transform: translate(-50%, 50%) scale(${scale});" onclick="showDetail(${complexes.indexOf(c)})">
-                        <div class="bg-white/95 rounded-xl px-3 py-2 shadow-lg border-2 border-rose-400 text-center min-w-[90px]">
-                            <div class="text-[11px] font-black text-slate-900 truncate max-w-[110px]">${c.name}</div>
-                            <div class="text-sm font-black text-rose-600">${priceLabel(c)}</div>
-                            <div class="text-[9px] text-slate-400">${c.distanceKm}km</div>
+                        <div class="bg-white/95 rounded-2xl px-4 py-3 shadow-lg border-[3px] border-rose-400 text-center min-w-[120px]">
+                            <div class="text-sm font-black text-slate-900 truncate max-w-[140px]">${c.name}</div>
+                            <div class="text-xl font-black text-rose-600">${priceLabel(c)}</div>
+                            <div class="text-xs font-bold text-slate-400">${c.distanceKm}km</div>
                         </div>
-                        <div class="w-2 h-2 bg-rose-400 rounded-full mx-auto -mt-0.5"></div>
+                        <div class="w-3 h-3 bg-rose-400 rounded-full mx-auto -mt-1"></div>
                     </div>
                 `;
             }).join('');
+
+            // 화각 밖(좌/우)에 더 있으면, 폰을 돌려서 볼 수 있다는 걸 화살표로 안내한다.
+            const offLeft = inRange.filter(c => normalizeAngleDiff(c.bearing - currentHeading) < -FOV_DEG / 2).length;
+            const offRight = inRange.filter(c => normalizeAngleDiff(c.bearing - currentHeading) > FOV_DEG / 2).length;
+            if (offLeft > 0) {
+                pinsHtml += `<div class="fixed left-2 top-1/2 -translate-y-1/2 pointer-events-none bg-black/60 text-white text-sm font-bold rounded-full px-3.5 py-2.5"><i class="fa-solid fa-chevron-left"></i> ${offLeft}개 더</div>`;
+            }
+            if (offRight > 0) {
+                pinsHtml += `<div class="fixed right-2 top-1/2 -translate-y-1/2 pointer-events-none bg-black/60 text-white text-sm font-bold rounded-full px-3.5 py-2.5">${offRight}개 더 <i class="fa-solid fa-chevron-right"></i></div>`;
+            }
+
+            overlay.innerHTML = pinsHtml;
         }
 
         function showDetail(idx) {
@@ -240,6 +269,9 @@
                 전용 ${c.latestPyeong}평 · ${c.latestFloor}층 · ${c.latestDate}<br>
                 최근 ${c.dealCount}건 거래, 평균 ${c.avgPriceEok}억
             `;
+            const regionText = currentRegionInfo ? `${currentRegionInfo.sido} ${currentRegionInfo.sigungu} ` : '';
+            const naverUrl = `https://search.naver.com/search.naver?query=${encodeURIComponent(`${regionText}${c.dong} ${c.name} 아파트 시세`)}`;
+            document.getElementById('detail-naver-link').href = naverUrl;
             document.getElementById('detail-popup').classList.remove('hidden');
         }
     </script>

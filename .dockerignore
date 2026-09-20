@@ -1,10 +1,6 @@
 node_modules
 .env
-.env.yaml
+*.log
 .git
 .gitignore
-*.log
-.vercel
-vercel.json
-api
 README.md

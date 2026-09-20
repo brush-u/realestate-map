@@ -336,7 +336,7 @@ async function fetchMolitTradesOnce(lawdCd, dealYmd, housingType = 'apt', dealCa
         numOfRows: 500, // 시군구+월 단위라 이 정도면 충분하고, 과도한 응답 크기로 인한 GW 오류 가능성을 줄인다
         pageNo: 1,
       },
-      timeout: 15000,
+      timeout: 25000, // 국토부 API가 느릴 때가 있어 넉넉하게 잡음 (Cloud Run 자체 타임아웃이 더 짧으면 그게 먼저 끊는다)
       responseType: 'text',
       transformResponse: [(d) => d], // xml2js에 원문 그대로 넘기기 위해 axios의 자동 JSON 파싱을 끈다
     });
@@ -427,8 +427,10 @@ async function fetchMolitTradesOnce(lawdCd, dealYmd, housingType = 'apt', dealCa
 }
 
 // 재시도까지 포함한 단일 월 조회. 실패하면 마지막 에러를 throw.
+// (국토부 API가 느릴 때가 있어 개별 호출에는 시간을 넉넉히 주되, 무한정 재시도하지는 않는다 -
+//  실제 병목이 Cloud Run 자체의 요청 제한시간(Request timeout)일 수 있으니, 그 값도 확인 필요)
 async function fetchMolitTradesRetried(lawdCd, dealYmd, housingType = 'apt', dealCategory = 'trade') {
-  const MAX_ATTEMPTS = 3;
+  const MAX_ATTEMPTS = 2;
   let lastError;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {

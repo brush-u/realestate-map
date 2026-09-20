@@ -1,17 +1,17 @@
-# Cloud Run 배포용 Dockerfile
+# 내 집 한방 뽑기 - Cloud Run 배포용 Dockerfile
 FROM node:20-slim
 
 WORKDIR /app
 
-# package.json/package-lock.json만 먼저 복사해서 의존성 설치 레이어를 캐싱 (재빌드 속도 향상)
+# 의존성만 먼저 복사해서 캐시 활용 (package.json이 안 바뀌면 npm install 스킵됨)
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev --no-audit --no-fund
 
-# 나머지 소스 복사 (.dockerignore로 node_modules, .env, .git 등은 제외됨)
+# 나머지 소스 복사
 COPY . .
 
+# Cloud Run은 컨테이너에 PORT 환경변수를 주입한다 (보통 8080). server.js가
+# process.env.PORT를 그대로 쓰므로 여기서 고정값을 넣지 않아도 된다.
 ENV NODE_ENV=production
-# Cloud Run은 PORT 환경변수를 주입하며, server.js가 이미 process.env.PORT를 사용합니다.
-EXPOSE 8080
 
 CMD ["node", "server.js"]

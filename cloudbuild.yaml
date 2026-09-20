@@ -1,0 +1,56 @@
+# GitHub 저장소에 push되면 Cloud Build 트리거가 이 파일을 읽어서
+# 1) 컨테이너 이미지를 빌드하고 2) Artifact Registry에 올린 뒤 3) Cloud Run에 배포한다.
+#
+# 사전 준비 (한 번만 하면 됨):
+#   1. Artifact Registry 저장소 생성 (없다면):
+#      gcloud artifacts repositories create realestate-map-repo \
+#        --repository-format=docker --location=asia-northeast3
+#
+#   2. Cloud Build 서비스 계정에 Cloud Run 배포 권한 부여:
+#      - "Cloud Run 관리자(roles/run.admin)"
+#      - "서비스 계정 사용자(roles/iam.serviceAccountUser)"
+#      (Cloud Run 콘솔에서 "Cloud Build로 자동 배포 설정" 마법사를 쓰면 이 권한들이 자동으로 붙는다)
+#
+#   3. GCP 콘솔 > Cloud Build > 트리거 > "트리거 만들기"에서 이 GitHub 저장소를 연결하고,
+#      "구성 파일 위치"를 이 cloudbuild.yaml로 지정한다. main 브랜치 push마다 자동 실행됨.
+#
+#   4. 환경변수(API 키)는 이 파일에 넣지 않는다 - 노출 위험. 대신 Cloud Run 서비스의
+#      "변수 및 보안 비밀" 설정에서 직접 등록한다 (아래 "배포 후 확인" 참고).
+
+steps:
+  # 1) 컨테이너 이미지 빌드
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'asia-northeast3-docker.pkg.dev/$PROJECT_ID/realestate-map-repo/realestate-map:$COMMIT_SHA'
+      - '.'
+
+  # 2) Artifact Registry에 푸시
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'asia-northeast3-docker.pkg.dev/$PROJECT_ID/realestate-map-repo/realestate-map:$COMMIT_SHA'
+
+  # 3) Cloud Run에 배포
+  #    --timeout: 국토부 API가 느릴 때가 있어 요청 제한시간을 넉넉히 잡는다 (기본 300초보다 김).
+  #    환경변수는 여기서 매번 새로 넣지 않는다 - 이미 등록된 값이 있으면 자동으로 유지된다.
+  #    (만약 처음 배포라 아직 값이 없다면, 배포 후 콘솔에서 한 번만 등록하면 그 다음부터는 유지됨)
+  - name: 'gcr.io/google-cloud-sdk/slim'
+    args:
+      - 'gcloud'
+      - 'run'
+      - 'deploy'
+      - 'realestate-map'
+      - '--image=asia-northeast3-docker.pkg.dev/$PROJECT_ID/realestate-map-repo/realestate-map:$COMMIT_SHA'
+      - '--region=asia-northeast3'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--timeout=300'
+      - '--memory=512Mi'
+
+images:
+  - 'asia-northeast3-docker.pkg.dev/$PROJECT_ID/realestate-map-repo/realestate-map:$COMMIT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
