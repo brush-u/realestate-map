@@ -6,34 +6,8 @@
     <title>내 집 한방 뽑기</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 브랜드 컬러: 기존에 'indigo'/'violet' 클래스로 쓰여 있던 모든 요소(정적 마크업 +
-         JS가 런타임에 그려 넣는 카드/배지 포함, Tailwind CDN이 DOM 변화를 계속 관찰해
-         새 클래스도 자동으로 스타일링해줌)를 하나의 톤으로 새로 디자인하기 위해
-         색상 팔레트 자체를 덮어쓴다. 이렇게 하면 로직/구조는 전혀 건드리지 않고
-         전체 톤앤매너만 바꿀 수 있다. -->
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        indigo: {
-                            50: '#F1FAF7', 100: '#DCF0E9', 200: '#B7E1D5', 300: '#7CC4B4',
-                            400: '#3FA391', 500: '#1C8172', 600: '#146356', 700: '#0F4C42',
-                            800: '#0C3D35', 900: '#0A302A', 950: '#061C18',
-                        },
-                        violet: { 600: '#146356', 700: '#0F4C42' },
-                    },
-                    fontFamily: {
-                        sans: ["'Pretendard Variable'", "'Pretendard'", "'Apple SD Gothic Neo'", "'Malgun Gothic'", 'sans-serif'],
-                    },
-                },
-            },
-        };
-    </script>
     <!-- 폰트어썸 (아이콘) -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Pretendard: 국문 UI에 최적화된 가변 폰트로 교체 (기존 시스템 폰트는 폴백으로 유지) -->
-    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.css">
     <!-- 지역 비교분석 차트용 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- 구글 맵 키는 더 이상 클라이언트 파일에 하드코딩하지 않고,
@@ -59,7 +33,7 @@
         window.addEventListener('DOMContentLoaded', loadGoogleMaps);
     </script>
     <style>
-        body { font-family: 'Pretendard Variable', 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; }
+        body { font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
@@ -139,7 +113,7 @@
             margin-top: -8px; /* (22px 손잡이 - 6px 트랙) / 2 만큼 올려서 트랙 중앙에 오도록 */
             border-radius: 50%;
             background: #ffffff;
-            border: 3px solid #146356;
+            border: 3px solid #7c3aed;
             cursor: pointer;
             pointer-events: auto;
             box-shadow: 0 2px 4px rgba(0,0,0,0.15);
@@ -155,7 +129,7 @@
             height: 16px;
             border-radius: 50%;
             background: #ffffff;
-            border: 3px solid #146356;
+            border: 3px solid #7c3aed;
             cursor: pointer;
             pointer-events: auto;
             box-shadow: 0 2px 4px rgba(0,0,0,0.15);
@@ -203,7 +177,7 @@
             margin-top: -8px;
             border-radius: 50%;
             background: #ffffff;
-            border: 3px solid #146356;
+            border: 3px solid #7c3aed;
             cursor: pointer;
             box-shadow: 0 2px 4px rgba(0,0,0,0.15);
         }
@@ -217,17 +191,17 @@
             height: 16px;
             border-radius: 50%;
             background: #ffffff;
-            border: 3px solid #146356;
+            border: 3px solid #7c3aed;
             cursor: pointer;
             box-shadow: 0 2px 4px rgba(0,0,0,0.15);
         }
 
-        /* 슬라이더 사이를 연결해주는 선명한 브랜드 컬러 활성 진행 바 */
+        /* 슬라이더 사이를 연결해주는 선명한 보라색 활성 진행 바 */
         .range-track-active {
             position: absolute;
             top: 7px;
             height: 6px;
-            background-color: #146356;
+            background-color: #7c3aed;
             border-radius: 3px;
             pointer-events: none;
             z-index: 2;
@@ -237,9 +211,9 @@
             animation: pulse-border 1.5s ease-in-out 2;
         }
         @keyframes pulse-border {
-            0% { border-color: #146356; box-shadow: 0 0 0 3px rgba(20, 99, 86, 0.3); }
-            50% { border-color: #cbd5e1; box-shadow: 0 0 0 0 rgba(20, 99, 86, 0); }
-            100% { border-color: #146356; box-shadow: 0 0 0 3px rgba(20, 99, 86, 0.3); }
+            0% { border-color: #7c3aed; box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.3); }
+            50% { border-color: #cbd5e1; box-shadow: 0 0 0 0 rgba(124, 58, 237, 0); }
+            100% { border-color: #7c3aed; box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.3); }
         }
 
     </style>
@@ -247,15 +221,13 @@
 <body class="bg-slate-50 text-slate-800 h-screen w-screen overflow-hidden flex flex-col">
 
     <!-- 상단 헤더 -->
-    <header class="bg-indigo-900 text-white shadow-md z-30 flex-shrink-0">
+    <header class="bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md z-30 flex-shrink-0">
         <div class="px-4 py-3 flex justify-between items-center gap-2">
-            <div class="flex items-center space-x-2.5 min-w-0">
-                <div class="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
-                    <i class="fa-solid fa-house-chimney text-sm text-amber-300"></i>
-                </div>
+            <div class="flex items-center space-x-2 min-w-0">
+                <i class="fa-solid fa-house-chimney text-lg flex-shrink-0"></i>
                 <div class="leading-tight min-w-0">
                     <h1 class="text-base font-bold tracking-tight">내 집 한방 뽑기</h1>
-                    <p class="text-[9px] text-white/60 font-medium truncate max-w-[170px] sm:max-w-none">국토부 실거래가 기반 시세 조회 - 발품 없이 한눈에 보는 부동산 시세 솔루션</p>
+                    <p class="text-[9px] text-white/80 font-medium truncate max-w-[170px] sm:max-w-none">국토부 실거래가 기반 시세 조회 - 발품 없이 한눈에 보는 부동산 시세 솔루션</p>
                 </div>
             </div>
             <div class="flex items-center space-x-2 flex-shrink-0">
@@ -305,7 +277,7 @@
         </div>
 
         <!-- 검색 실행 버튼 (하단 중앙 플로팅) -->
-        <button id="search-action-btn" onclick="triggerSearchWithSuspense()" class="absolute bottom-5 left-1/2 -translate-x-1/2 z-20 px-6 py-3.5 bg-indigo-700 hover:bg-indigo-800 active:scale-[0.97] text-white font-bold rounded-full shadow-xl shadow-indigo-900/30 transition flex items-center space-x-2 text-sm cursor-pointer whitespace-nowrap">
+        <button id="search-action-btn" onclick="triggerSearchWithSuspense()" class="absolute bottom-5 left-1/2 -translate-x-1/2 z-20 px-6 py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 active:scale-[0.97] text-white font-bold rounded-full shadow-xl transition flex items-center space-x-2 text-sm cursor-pointer whitespace-nowrap">
             <i class="fa-solid fa-magnifying-glass"></i>
             <span id="search-btn-text">국토부 실거래가 조회</span>
         </button>
@@ -518,7 +490,7 @@
         <!-- 아래 목록이 "현재 매물"이 아니라 국토부에 신고된 과거 실거래 내역임을 명확히 안내 -->
         <div class="px-4 py-2 bg-amber-50 border-b border-amber-100 text-[11px] text-amber-700 leading-snug">
             ℹ️ 아래는 국토부에 신고된 <strong>과거 실거래 내역</strong>(시세 참고용)입니다. 실제 매물 여부는 각 카드의
-            "네이버부동산에서 확인" 버튼으로 확인해주세요.
+            단지명을 눌러 네이버부동산에서 확인해주세요.
         </div>
 
         <div id="result-container" class="flex-grow overflow-y-auto p-4 space-y-4">
@@ -1447,7 +1419,7 @@
                                 const showInfo = () => {
                                     infoWindow.setContent(`
                                         <div style="padding:0px; font-family:'Apple SD Gothic Neo',sans-serif;">
-                                            <div onclick="goToListItem('${item.id}', ${item.lat}, ${item.lng})" style="font-weight:700; font-size:13px; color:#0F4C42; margin-bottom:2px; cursor:pointer; text-decoration:underline; text-underline-offset:2px;">${item.name}</div>
+                                            <div onclick="goToListItem('${item.id}', ${item.lat}, ${item.lng})" style="font-weight:700; font-size:13px; color:#4338ca; margin-bottom:2px; cursor:pointer; text-decoration:underline; text-underline-offset:2px;">${item.name}</div>
                                             <div style="font-size:12px; color:#64748b;">${priceLabel}: <strong style="color:${item.isEstimate ? '#b45309' : '#e11d48'}; font-weight:800;">${formatPriceText(item)}</strong> (${item.pyeong}평)</div>
                                         </div>
                                     `);
