@@ -191,6 +191,13 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || data.error || '조회 실패');
 
+                // 새 데이터로 완전히 교체되는 시점이므로, 화면의 기존 아이콘을 전부 지운다.
+                // (그대로 두면 새 목록의 id가 0번부터 다시 시작되면서, 옛날 아이콘이
+                // 재사용되어 실제로는 다른 단지인데 예전 이름/가격을 계속 보여주는 버그가 있었다.
+                // 방향센서가 움직일 때마다 매번 지우는 게 아니라, "데이터 자체가 바뀔 때"만
+                // 지우므로 탭 도중 사라지는 문제는 여전히 없다.)
+                document.querySelectorAll('.ar-pin').forEach(el => el.remove());
+
                 currentRegionInfo = data.region || null;
                 complexes = (data.complexes || []).map((c, idx) => ({
                     ...c,
