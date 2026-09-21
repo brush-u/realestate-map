@@ -62,7 +62,7 @@
     <div id="detail-popup" class="hidden fixed inset-x-4 bottom-28 z-40 bg-white rounded-2xl p-4 shadow-2xl">
         <div class="flex justify-between items-start">
             <div>
-                <div id="detail-name" class="font-black text-slate-900"></div>
+                <div id="detail-name" class="font-black text-slate-900 text-lg"></div>
                 <div id="detail-dong" class="text-xs text-slate-400"></div>
             </div>
             <button onclick="document.getElementById('detail-popup').classList.add('hidden')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
@@ -70,15 +70,15 @@
         <div class="grid grid-cols-2 gap-2 mt-3 text-xs">
             <div class="bg-rose-50 rounded-lg p-2">
                 <div class="text-rose-400 font-semibold text-[10px]">최근 거래가</div>
-                <div id="detail-price" class="font-black text-rose-600 text-base"></div>
+                <div id="detail-price" class="font-black text-rose-600 text-2xl"></div>
             </div>
             <div class="bg-slate-50 rounded-lg p-2">
                 <div class="text-slate-400 font-semibold text-[10px]">직선거리</div>
-                <div id="detail-distance" class="font-black text-slate-700 text-base"></div>
+                <div id="detail-distance" class="font-black text-slate-700 text-2xl"></div>
             </div>
         </div>
-        <div id="detail-extra" class="text-xs text-slate-500 mt-2 leading-relaxed"></div>
-        <a id="detail-naver-link" href="#" target="_blank" class="mt-3 flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg py-2.5 transition">
+        <div id="detail-extra" class="text-sm text-slate-500 mt-2 leading-relaxed"></div>
+        <a id="detail-naver-link" href="#" target="_blank" class="mt-3 flex items-center justify-center gap-1.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg py-3.5 transition">
             <i class="fa-solid fa-magnifying-glass text-[11px]"></i>
             <span>네이버부동산에서 확인</span>
         </a>
@@ -192,8 +192,9 @@
                 if (!res.ok) throw new Error(data.detail || data.error || '조회 실패');
 
                 currentRegionInfo = data.region || null;
-                complexes = (data.complexes || []).map(c => ({
+                complexes = (data.complexes || []).map((c, idx) => ({
                     ...c,
+                    id: idx,
                     bearing: calcBearing(currentLat, currentLng, c.lat, c.lng),
                 }));
 
@@ -219,47 +220,65 @@
         function renderOverlay() {
             const overlay = document.getElementById('ar-overlay');
             if (currentHeading === null || currentLat === null || complexes.length === 0) {
-                overlay.innerHTML = '';
+                overlay.querySelectorAll('.ar-pin').forEach(el => el.remove());
+                overlay.querySelectorAll('.ar-offscreen-hint').forEach(el => el.remove());
                 return;
             }
 
             const inRange = complexes.filter(c => c.distanceKm <= MAX_DIST_KM);
             const visible = inRange.filter(c => Math.abs(normalizeAngleDiff(c.bearing - currentHeading)) <= FOV_DEG / 2);
+            const visibleIds = new Set(visible.map(c => c.id));
 
-            let pinsHtml = visible.map(c => {
+            // 화면 밖으로 나간 핀만 제거한다 (탭 중인 핀이 갑자기 사라지는 일이 없도록,
+            // 화면에 계속 있는 핀은 요소를 그대로 재사용하고 위치만 갱신한다)
+            overlay.querySelectorAll('.ar-pin').forEach(el => {
+                if (!visibleIds.has(Number(el.dataset.id))) el.remove();
+            });
+
+            visible.forEach(c => {
                 const diff = normalizeAngleDiff(c.bearing - currentHeading);
                 const leftPercent = 50 + (diff / (FOV_DEG / 2)) * 50;
                 const t = Math.min(c.distanceKm / MAX_DIST_KM, 1); // 0=가까움, 1=멀음
                 const bottomPercent = 18 + t * 45;
-                const scale = 1.5 - t * 0.5; // 최소 크기를 올려서 멀리 있어도 탭하기 쉽게 함
+                const scale = 1.7 - t * 0.5; // 최소 크기를 크게 올려서 멀리 있어도 잘 보이고 탭하기 쉽게 함
 
-                return `
-                    <div class="ar-pin" style="left:${leftPercent}%; bottom:${bottomPercent}%; transform: translate(-50%, 50%) scale(${scale});" onclick="showDetail(${complexes.indexOf(c)})">
-                        <div class="bg-white/95 rounded-2xl px-4 py-3 shadow-lg border-[3px] border-rose-400 text-center min-w-[120px]">
-                            <div class="text-sm font-black text-slate-900 truncate max-w-[140px]">${c.name}</div>
-                            <div class="text-xl font-black text-rose-600">${priceLabel(c)}</div>
-                            <div class="text-xs font-bold text-slate-400">${c.distanceKm}km</div>
+                let el = overlay.querySelector(`.ar-pin[data-id="${c.id}"]`);
+                if (!el) {
+                    // 처음 보이는 핀만 새로 만든다 - 내용(이름/가격/거리)은 여기서 한 번만 채운다
+                    el = document.createElement('div');
+                    el.className = 'ar-pin';
+                    el.dataset.id = c.id;
+                    el.innerHTML = `
+                        <div class="bg-white rounded-2xl px-5 py-4 shadow-xl border-4 border-rose-500 text-center min-w-[150px]">
+                            <div class="text-base font-black text-slate-900 truncate max-w-[180px]">${c.name}</div>
+                            <div class="text-2xl font-black text-rose-600 my-0.5">${priceLabel(c)}</div>
+                            <div class="text-sm font-bold text-slate-400">${c.distanceKm}km</div>
                         </div>
-                        <div class="w-3 h-3 bg-rose-400 rounded-full mx-auto -mt-1"></div>
-                    </div>
-                `;
-            }).join('');
+                        <div class="w-4 h-4 bg-rose-500 rounded-full mx-auto -mt-1.5 border-2 border-white"></div>
+                    `;
+                    el.addEventListener('click', () => showDetail(c.id));
+                    overlay.appendChild(el);
+                }
+                // 위치/크기만 갱신 (요소 자체는 재사용 - 탭 도중 사라지지 않게)
+                el.style.left = leftPercent + '%';
+                el.style.bottom = bottomPercent + '%';
+                el.style.transform = `translate(-50%, 50%) scale(${scale})`;
+            });
 
             // 화각 밖(좌/우)에 더 있으면, 폰을 돌려서 볼 수 있다는 걸 화살표로 안내한다.
+            overlay.querySelectorAll('.ar-offscreen-hint').forEach(el => el.remove());
             const offLeft = inRange.filter(c => normalizeAngleDiff(c.bearing - currentHeading) < -FOV_DEG / 2).length;
             const offRight = inRange.filter(c => normalizeAngleDiff(c.bearing - currentHeading) > FOV_DEG / 2).length;
             if (offLeft > 0) {
-                pinsHtml += `<div class="fixed left-2 top-1/2 -translate-y-1/2 pointer-events-none bg-black/60 text-white text-sm font-bold rounded-full px-3.5 py-2.5"><i class="fa-solid fa-chevron-left"></i> ${offLeft}개 더</div>`;
+                overlay.insertAdjacentHTML('beforeend', `<div class="ar-offscreen-hint fixed left-2 top-1/2 -translate-y-1/2 pointer-events-none bg-black/60 text-white text-base font-bold rounded-full px-4 py-3"><i class="fa-solid fa-chevron-left"></i> ${offLeft}개 더</div>`);
             }
             if (offRight > 0) {
-                pinsHtml += `<div class="fixed right-2 top-1/2 -translate-y-1/2 pointer-events-none bg-black/60 text-white text-sm font-bold rounded-full px-3.5 py-2.5">${offRight}개 더 <i class="fa-solid fa-chevron-right"></i></div>`;
+                overlay.insertAdjacentHTML('beforeend', `<div class="ar-offscreen-hint fixed right-2 top-1/2 -translate-y-1/2 pointer-events-none bg-black/60 text-white text-base font-bold rounded-full px-4 py-3">${offRight}개 더 <i class="fa-solid fa-chevron-right"></i></div>`);
             }
-
-            overlay.innerHTML = pinsHtml;
         }
 
-        function showDetail(idx) {
-            const c = complexes[idx];
+        function showDetail(id) {
+            const c = complexes.find(x => x.id === id);
             if (!c) return;
             document.getElementById('detail-name').innerText = c.name;
             document.getElementById('detail-dong').innerText = c.dong;

@@ -571,18 +571,52 @@ app.get('/api/molit/nearby-complexes', async (req, res) => {
     return res.status(404).json({ error: '이 위치의 시군구코드를 확인하지 못했습니다.' });
   }
 
-  // 2) 이번달 실거래 조회, 없으면 최근 3개월까지 거슬러 올라가며 시도 (실거래는 며칠 걸러
-  //    나오는 경우가 많아 이번달에 아무 데이터도 없을 수 있다)
+  // 1.5) 반경이 1km를 넘으면, 주변 4방향도 샘플링해서 인접 시군구까지 포함한다.
+  //    (반경 안에 여러 시군구가 걸쳐있는 경우가 흔해서, 내 위치의 시군구 하나만 보면
+  //    실제로는 가까운데도 다른 시군구라 누락되는 단지가 많았다)
+  const regionsMap = new Map();
+  regionsMap.set(region.lawdCd, region);
+  if (radiusKm > 1) {
+    const toRad = (d) => d * Math.PI / 180;
+    const destPoint = (baseLat, baseLng, distKm, bearingDeg) => {
+      const R = 6371;
+      const brng = toRad(bearingDeg);
+      const lat1 = toRad(baseLat), lng1 = toRad(baseLng);
+      const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distKm / R) + Math.cos(lat1) * Math.sin(distKm / R) * Math.cos(brng));
+      const lng2 = lng1 + Math.atan2(Math.sin(brng) * Math.sin(distKm / R) * Math.cos(lat1), Math.cos(distKm / R) - Math.sin(lat1) * Math.sin(lat2));
+      return { lat: lat2 * 180 / Math.PI, lng: lng2 * 180 / Math.PI };
+    };
+    const bearings = [0, 90, 180, 270]; // 북, 동, 남, 서
+    const points = bearings.map(b => destPoint(lat, lng, radiusKm, b));
+    const settled = await Promise.allSettled(points.map(p => reverseGeocode(p.lat, p.lng)));
+    settled.forEach(r => {
+      if (r.status === 'fulfilled' && r.value && r.value.supported && !regionsMap.has(r.value.lawdCd)) {
+        regionsMap.set(r.value.lawdCd, r.value);
+      }
+    });
+  }
+  const regions = [...regionsMap.values()].slice(0, 5);
+
+  // 2) 각 지역마다 최근 3개월치를 모두 모은다 (첫 달에 데이터가 있어도 멈추지 않고
+  //    계속 모아서 단지 개수를 늘린다 - 실거래는 며칠 걸러 나오는 경우가 많다)
   const now = new Date();
+  const monthsToTry = [0, 1, 2].map(back => shiftYm(`${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`, back));
   let trades = [];
   let usedYmd = null;
-  for (let back = 0; back < 3 && trades.length === 0; back++) {
-    const ymd = shiftYm(`${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`, back);
-    try {
-      trades = await fetchMolitTradesRetried(region.lawdCd, ymd, housingType, dealCategory);
-      if (trades.length > 0) usedYmd = ymd;
-    } catch (err) {
-      console.error('[nearby-complexes] 실거래 조회 실패', ymd, err.message);
+  for (let i = 0; i < regions.length; i += 2) {
+    const regionBatch = regions.slice(i, i + 2);
+    for (const ym of monthsToTry) {
+      const results = await Promise.allSettled(
+        regionBatch.map(r => fetchMolitTradesRetried(r.lawdCd, ym, housingType, dealCategory)
+          .then(list => list.map(t => ({ ...t, _sido: r.sido, _sigungu: r.sigungu }))))
+      );
+      results.forEach(res => {
+        if (res.status === 'fulfilled' && res.value.length > 0) {
+          trades.push(...res.value);
+          if (!usedYmd || ym > usedYmd) usedYmd = ym;
+        }
+      });
+      await sleep(120);
     }
   }
   if (trades.length === 0) {
@@ -592,7 +626,7 @@ app.get('/api/molit/nearby-complexes', async (req, res) => {
   // 3) 단지(주소)별로 묶어서 최근 거래가/거래건수 집계
   const byAddress = new Map();
   trades.forEach(t => {
-    const address = `${region.sido} ${region.sigungu} ${t.umdNm} ${t.aptNm}`.trim();
+    const address = `${t._sido} ${t._sigungu} ${t.umdNm} ${t.aptNm}`.trim();
     if (!byAddress.has(address)) {
       byAddress.set(address, { name: t.aptNm, dong: t.umdNm, deals: [] });
     }
