@@ -51,7 +51,13 @@ const MOLIT_API_KEY = process.env.MOLIT_API_KEY;
 const kakaoHeaders = { Authorization: `KakaoAK ${KAKAO_REST_API_KEY}` };
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+// 배포할 때마다 브라우저/폰이 옛날 버전을 캐시해서 계속 보여주는 문제를 막기 위해,
+// 정적 파일(HTML/JS 등)에 캐시하지 말라고 명시적으로 지시한다.
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  },
+}));
 
 // -----------------------------------------------------------------------
 // 1) 클라이언트가 구글맵 JS SDK를 로드할 때 필요한 "공개" 키만 내려준다.
