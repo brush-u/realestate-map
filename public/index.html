@@ -665,7 +665,23 @@
             });
 
             updateRadiusCircle();
-            initGeolocation();
+
+            // 지역분석의 "거래건수 랭킹"에서 특정 구를 눌러 넘어온 경우, URL의 lat/lng로
+            // 그 위치를 바로 검색한다. 파라미터가 없으면 평소처럼 현위치를 자동 감지한다.
+            const urlParams = new URLSearchParams(window.location.search);
+            const paramLat = parseFloat(urlParams.get('lat'));
+            const paramLng = parseFloat(urlParams.get('lng'));
+            if (!isNaN(paramLat) && !isNaN(paramLng)) {
+                currentLat = paramLat;
+                currentLng = paramLng;
+                map.setCenter({ lat: paramLat, lng: paramLng });
+                centerMarker.setPosition({ lat: paramLat, lng: paramLng });
+                document.getElementById('geo-text').innerText = urlParams.get('label') || '지정된 위치';
+                resolveLawdForCenter().then(() => triggerSearchWithSuspense());
+            } else {
+                initGeolocation();
+            }
+
             updateBudgetRange();
             updatePyeongRange();
             setupDualRangeClickHandlers();

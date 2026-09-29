@@ -58,14 +58,18 @@
         <div class="text-center text-white text-[11px] bg-black/40 rounded-full py-1.5 px-3" id="found-count-text">주변 단지 확인 중...</div>
     </div>
 
-    <!-- 상세 정보 팝업 -->
-    <div id="detail-popup" class="hidden fixed inset-x-4 bottom-28 z-40 bg-white rounded-2xl p-4 shadow-2xl">
+    <!-- 상세 정보 팝업: 화면 중앙에 뜨는 모달 + 어두운 배경으로 변경.
+         (예전엔 화면 하단에 떠 있어서 항상 보이는 하단 조건바와 같은 영역을 다퉜는데,
+         화면 크기에 따라 네이버 버튼이 하단바 뒤에 가려 탭이 안 먹히는 경우가 있었다.
+         중앙 모달 + 백드롭 방식은 이런 겹침 자체가 구조적으로 생길 수 없다.) -->
+    <div id="detail-backdrop" class="hidden fixed inset-0 z-40 bg-black/60" onclick="document.getElementById('detail-popup').classList.add('hidden'); document.getElementById('detail-backdrop').classList.add('hidden');"></div>
+    <div id="detail-popup" class="hidden fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 bg-white rounded-2xl p-4 shadow-2xl max-h-[80vh] overflow-y-auto">
         <div class="flex justify-between items-start">
             <div>
                 <div id="detail-name" class="font-black text-slate-900 text-lg"></div>
                 <div id="detail-dong" class="text-xs text-slate-400"></div>
             </div>
-            <button onclick="document.getElementById('detail-popup').classList.add('hidden')" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
+            <button onclick="document.getElementById('detail-popup').classList.add('hidden'); document.getElementById('detail-backdrop').classList.add('hidden');" class="text-slate-400 w-8 h-8 flex items-center justify-center flex-shrink-0"><i class="fa-solid fa-xmark text-lg"></i></button>
         </div>
         <div class="grid grid-cols-2 gap-2 mt-3 text-xs">
             <div class="bg-rose-50 rounded-lg p-2">
@@ -82,6 +86,7 @@
             <i class="fa-solid fa-magnifying-glass text-[11px]"></i>
             <span>네이버부동산에서 확인</span>
         </a>
+
     </div>
 
     <script>
@@ -299,6 +304,7 @@
             const naverUrl = `https://search.naver.com/search.naver?query=${encodeURIComponent(`${regionText}${c.dong} ${c.name} 아파트 시세`)}`;
             document.getElementById('detail-naver-link').href = naverUrl;
             document.getElementById('detail-popup').classList.remove('hidden');
+            document.getElementById('detail-backdrop').classList.remove('hidden');
         }
     </script>
 </body>

@@ -15,7 +15,7 @@
 <body class="bg-slate-50 text-slate-800">
 
     <!-- 헤더 -->
-    <header class="bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md">
+    <header class="bg-indigo-900 text-white shadow-md">
         <div class="px-4 py-3 flex justify-between items-center">
             <div class="flex items-center space-x-2">
                 <i class="fa-solid fa-chart-column text-lg"></i>
@@ -90,6 +90,22 @@
             </button>
         </div>
 
+        <!-- 거래건수 랭킹 (현재 선택된 지역 범위 내에서 - 서울이면 25개구 전체) -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+            <div class="flex items-center justify-between">
+                <div class="text-sm font-black text-slate-800">🏆 거래건수 랭킹</div>
+                <span id="ranking-scope-label" class="text-[11px] text-slate-400"></span>
+            </div>
+            <p class="text-xs text-slate-500 leading-relaxed">
+                지도의 모든 구를 거래건수 기준으로 색칠하고 순위를 매깁니다. 가격이 아니라
+                "거래가 얼마나 활발한지"만 봅니다.
+            </p>
+            <button onclick="runRanking()" class="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm rounded-xl transition">
+                랭킹 조회 실행
+            </button>
+        </div>
+        <div id="ranking-result" class="space-y-4"></div>
+
         <!-- 결과 -->
         <div id="analysis-result" class="space-y-4">
             <div class="text-center py-10 text-slate-400 text-sm">지역을 선택하고 분석을 실행해보세요.</div>
@@ -158,6 +174,8 @@
             map.data.forEach(f => map.data.remove(f));
             districtDataByLawd = {};
             selectedLawdCds = [];
+            rankingData = null;
+            document.getElementById('ranking-result').innerHTML = '';
             renderSelection();
             document.getElementById('analysis-result').innerHTML = `<div class="text-center py-10 text-slate-400 text-sm">지역을 선택하고 분석을 실행해보세요.</div>`;
 
@@ -191,8 +209,32 @@
             document.head.appendChild(script);
         }
 
+        let rankingData = null; // { lawdCd: count } - 랭킹 모드일 때만 값이 있음
+
+        function countToColor(count, maxCount) {
+            if (count === null || maxCount === 0) return '#e2e8f0'; // 데이터 없음(회색)
+            const t = Math.min(count / maxCount, 1); // 0~1
+            // 연한 노랑(#fef3c7) -> 진한 빨강(#b91c1c)으로 보간
+            const from = [254, 243, 199], to = [185, 28, 28];
+            const rgb = from.map((f, i) => Math.round(f + (to[i] - f) * t));
+            return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+        }
+
         function districtStyle(feature) {
             const lawdCd = feature.getProperty('lawdCd');
+
+            if (rankingData) {
+                const count = rankingData[lawdCd] ?? null;
+                const maxCount = Math.max(...Object.values(rankingData).filter(v => v !== null), 1);
+                return {
+                    fillColor: countToColor(count, maxCount),
+                    fillOpacity: 0.75,
+                    strokeColor: '#ffffff',
+                    strokeWeight: 1.5,
+                    zIndex: 1,
+                };
+            }
+
             const idx = selectedLawdCds.indexOf(lawdCd);
             const isHovered = feature.getId() === hoveredFeatureId;
             if (idx !== -1) {
@@ -213,6 +255,86 @@
                 strokeWeight: isHovered ? 2.5 : 1,
                 zIndex: isHovered ? 5 : 1,
             };
+        }
+
+        let rankingChart = null;
+
+        async function runRanking() {
+            const rankingResultDiv = document.getElementById('ranking-result');
+            rankingResultDiv.innerHTML = `<div class="text-center py-8 text-slate-400 text-sm">전체 ${Object.keys(districtDataByLawd).length}개 구의 거래건수 조회 중... (몇 초 걸릴 수 있어요)</div>`;
+            document.getElementById('ranking-scope-label').innerText = `${currentRegion} 전체`;
+
+            const dealValue = document.getElementById('select-deal').value;
+            const housingValue = document.getElementById('select-housing').value;
+            const housingType = housingValue === '오피스텔' ? 'offi' : (housingValue === '빌라' ? 'villa' : 'apt');
+            const dealCategory = dealValue === '매매' ? 'trade' : 'rent';
+            const dealYmdInput = document.getElementById('input-deal-ymd').value;
+            if (!dealYmdInput) {
+                rankingResultDiv.innerHTML = `<div class="text-center py-8 text-amber-600 text-sm">계약년월을 설정해주세요.</div>`;
+                return;
+            }
+            const dealYmd = dealYmdInput.replace('-', '');
+
+            const areas = Object.entries(districtDataByLawd).map(([lawdCd, d]) => ({ lawdCd, name: d.name }));
+            let data;
+            try {
+                const res = await fetch('/api/molit/transaction-count-ranking', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ areas, dealYmd, housingType, dealCategory }),
+                });
+                data = await res.json();
+                if (!res.ok) throw new Error(data.detail || data.error || '조회 실패');
+            } catch (e) {
+                rankingResultDiv.innerHTML = `<div class="text-center py-8 text-rose-400 text-sm">랭킹 조회 실패: ${e.message}</div>`;
+                return;
+            }
+
+            rankingData = {};
+            data.results.forEach(r => { rankingData[r.lawdCd] = r.count; });
+            map.data.setStyle(districtStyle); // 지도 색칠 적용
+
+            const sorted = data.results.filter(r => r.count !== null).sort((a, b) => b.count - a.count);
+
+            rankingResultDiv.innerHTML = `
+                <div class="bg-white border border-slate-200 rounded-xl p-4">
+                    <div class="text-sm font-black text-slate-800 mb-2">구별 거래건수 순위 (${dealYmd.slice(0,4)}.${dealYmd.slice(4,6)})</div>
+                    <canvas id="chart-ranking-bar" height="220"></canvas>
+                </div>
+                <div class="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
+                    ${sorted.map((r, i) => `
+                        <div class="flex items-center justify-between px-4 py-2.5 cursor-pointer hover:bg-slate-50" onclick="goToDistrictSearch('${r.lawdCd}')">
+                            <div class="flex items-center gap-2.5">
+                                <span class="text-xs font-black w-6 text-center ${i < 3 ? 'text-amber-500' : 'text-slate-400'}">${i + 1}</span>
+                                <span class="text-sm font-bold text-slate-800">${r.name}</span>
+                            </div>
+                            <span class="text-sm font-black text-rose-600">${r.count}건</span>
+                        </div>
+                    `).join('')}
+                </div>
+                <p class="text-[11px] text-slate-400 text-center">순위를 탭하면 그 지역의 실거래가 상세를 볼 수 있어요.</p>
+            `;
+
+            const barCtx = document.getElementById('chart-ranking-bar');
+            if (rankingChart) rankingChart.destroy();
+            rankingChart = new Chart(barCtx, {
+                type: 'bar',
+                data: {
+                    labels: sorted.map(r => r.name),
+                    datasets: [{ data: sorted.map(r => r.count), backgroundColor: '#f59e0b', borderRadius: 4 }],
+                },
+                options: {
+                    indexAxis: 'y',
+                    plugins: { legend: { display: false } },
+                    scales: { x: { title: { display: true, text: '거래건수' } } },
+                },
+            });
+        }
+        function goToDistrictSearch(lawdCd) {
+            const d = districtDataByLawd[lawdCd];
+            if (!d) return;
+            const params = new URLSearchParams({ lat: d.centerLat, lng: d.centerLng, label: d.name });
+            window.location.href = `/?${params.toString()}`;
         }
 
         function initMap() {
@@ -247,6 +369,7 @@
         }
 
         function toggleDistrict(lawdCd) {
+            rankingData = null; // 구를 직접 선택하려는 의도이므로 랭킹 색칠 모드는 해제
             const idx = selectedLawdCds.indexOf(lawdCd);
             if (idx !== -1) {
                 selectedLawdCds.splice(idx, 1);

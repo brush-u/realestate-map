@@ -463,6 +463,47 @@ function shiftYm(dealYmd, monthsBack) {
 }
 
 // -----------------------------------------------------------------------
+// 4.65) 거래건수 랭킹 - 여러 지역의 "거래 몇 건 있었는지"만 가볍게 집계한다.
+//    평당가 계산이 없어 area-analysis보다 훨씬 가볍고 빠르다 (지도 색칠/순위용).
+// -----------------------------------------------------------------------
+app.post('/api/molit/transaction-count-ranking', async (req, res) => {
+  const { areas, dealYmd } = req.body || {};
+  const housingType = req.body?.housingType || 'apt';
+  const dealCategory = req.body?.dealCategory || 'trade';
+
+  if (!Array.isArray(areas) || areas.length === 0) {
+    return res.status(400).json({ error: 'areas 배열이 필요합니다.' });
+  }
+  if (!dealYmd || !/^\d{6}$/.test(dealYmd)) {
+    return res.status(400).json({ error: 'dealYmd(YYYYMM)가 필요합니다.' });
+  }
+  if (!MOLIT_API_KEY) {
+    return res.status(500).json({ error: 'MOLIT_API_KEY가 서버에 설정되지 않았습니다.' });
+  }
+
+  const validAreas = areas.filter(a => a && a.lawdCd && /^\d{5}$/.test(a.lawdCd));
+  const results = [];
+  // 지역을 3개씩 나눠 조회 (초당 호출 제한 대비)
+  for (let i = 0; i < validAreas.length; i += 3) {
+    const batch = validAreas.slice(i, i + 3);
+    const settled = await Promise.allSettled(
+      batch.map(a => fetchMolitTradesRetried(a.lawdCd, dealYmd, housingType, dealCategory))
+    );
+    settled.forEach((r, idx) => {
+      results.push({
+        lawdCd: batch[idx].lawdCd,
+        name: batch[idx].name || batch[idx].sigungu,
+        count: r.status === 'fulfilled' ? r.value.length : null,
+        failed: r.status !== 'fulfilled',
+      });
+    });
+    if (i + 3 < validAreas.length) await sleep(150);
+  }
+
+  res.json({ dealYmd, results });
+});
+
+// -----------------------------------------------------------------------
 // 4.7) 지역 비교분석 - 여러 지점의 실거래가를 최근 N개월치 모아 통계로 요약한다.
 //    지도에 개별 마커를 찍는 게 아니라 "평당가/추이/층별/평형별" 집계만 필요하므로
 //    좌표 지오코딩이 필요 없어 훨씬 가볍고 빠르다.
